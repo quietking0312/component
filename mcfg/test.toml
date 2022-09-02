@@ -1,0 +1,8 @@
+
+
+
+[server]
+mode = "debug"
+port = 80
+[db]
+host = "127.0.0.1"
