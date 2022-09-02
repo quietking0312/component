@@ -27,13 +27,14 @@ type EmailClient struct {
 	c        *smtp.Client
 }
 
-func NewEmailClient(host string, port int, username string, password string) *EmailClient {
+func NewEmailClient(host string, port int, username string, password string, cacheNumber int) *EmailClient {
 	cli := &EmailClient{
 		Host:     host,
 		Port:     port,
 		Username: username,
 		Password: password,
 		SSL:      port == 465,
+		MsgCh:    make(chan EmailMessage, cacheNumber),
 	}
 	return cli
 }
