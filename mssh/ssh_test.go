@@ -2,7 +2,7 @@ package mssh
 
 import (
 	"fmt"
-	"ops/sdk/mbar"
+	"mycomponent/mbar"
 	"os"
 	"path"
 	"testing"

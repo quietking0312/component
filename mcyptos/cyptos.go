@@ -15,16 +15,16 @@ var (
 )
 
 // Get32MD5 获取字符串32位md5
-func Get32MD5(args string) string {
+func Get32MD5(args []byte) string {
 	h := md5.New()
 	h.Size()
-	h.Write([]byte(args))
+	h.Write(args)
 	md5Str := fmt.Sprintf("%x", h.Sum(nil))
 	return md5Str
 }
 
 // Get16MD5 获取字符串16位md5
-func Get16MD5(args string) string {
+func Get16MD5(args []byte) string {
 	return Get32MD5(args)[8:24]
 }
 
