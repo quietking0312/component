@@ -97,6 +97,10 @@ func (b *Bar) Add(n ...int) {
 	}
 }
 
+func (b *Bar) Closed() bool {
+	return b.closed
+}
+
 func (b *Bar) count() {
 	now := time.Now()
 	nowKey := now.Format("2006102150405")
