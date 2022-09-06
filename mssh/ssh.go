@@ -66,6 +66,10 @@ func (c *Cli) Connect() (*Cli, error) {
 	return c, err
 }
 
+func (c *Cli) Close() error {
+	return c.client.Close()
+}
+
 func (c Cli) Run(command string) (string, error) {
 	if c.client == nil {
 		if _, err := c.Connect(); err != nil {
