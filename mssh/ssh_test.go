@@ -38,11 +38,7 @@ func TestCli_Connect(t *testing.T) {
 }
 
 func TestCli_UploadFileAndProgress(t *testing.T) {
-	cli := &Cli{
-		User: "ubuntu",
-		Pwd:  "#nmp3?c;G+L!Wy2R",
-		Addr: "152.136.171.104:22",
-	}
+	cli := &Cli{}
 	if _, err := cli.Connect(); err != nil {
 		t.Fatal(err)
 	}
