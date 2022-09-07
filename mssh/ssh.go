@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"time"
 )
 
 type Cli struct {
@@ -113,8 +114,10 @@ func (c Cli) UploadFile(localFilePath string, remotePath string) error {
 	return nil
 }
 
-func (c Cli) UploadFileAndProgress(srcFile io.Reader, remoteFile string, ch chan<- int64) error {
-	ftpClient, err := sftp.NewClient(c.client)
+func (c Cli) UploadFileAndProgress(srcFile io.Reader, remoteFile string, ch chan<- int64) (err error) {
+	ftpClient, err := sftp.NewClient(c.client,
+		sftp.UseConcurrentWrites(true),
+		sftp.MaxPacketUnchecked(1<<16))
 	if err != nil {
 		return err
 	}
@@ -125,23 +128,67 @@ func (c Cli) UploadFileAndProgress(srcFile io.Reader, remoteFile string, ch chan
 		return err
 	}
 	defer dstFile.Close()
-	buf := make([]byte, 1<<15) // 每个数据包最大支持32kb
+	var done = make(chan bool)
+	go func() {
+		defer func() {
+			time.Sleep(3 * time.Second)
+			done <- true
+		}()
+		if _, e := dstFile.ReadFrom(srcFile); e != nil {
+			fmt.Println(e)
+			err = e
+			return
+		}
+	}()
+	t := time.NewTicker(1 * time.Second)
+	lastSize := int64(0)
+	defer t.Stop()
 	for {
-		n, err := srcFile.Read(buf)
-		if err != nil {
-			if err != io.EOF {
+		select {
+		case <-t.C:
+			info, err := dstFile.Stat()
+			if err != nil {
 				fmt.Println(err)
 				return err
-			} else {
-				break
 			}
+			diff := info.Size() - lastSize
+			lastSize = info.Size()
+			if diff != 0 {
+				ch <- diff
+			}
+		case <-done:
+			return nil
 		}
-		size, _ := dstFile.Write(buf[:n])
-		//fmt.Println(size)
-		//ds, _ := dstFile.Stat()
-		ch <- int64(size)
 	}
-	return nil
+	//buf := make([]byte, 1<<15) // 每个数据包最大支持32kb
+	//var (
+	//	count        = 0
+	//	latest int64 = 0
+	//)
+	//for {
+	//	n, err := srcFile.Read(buf)
+	//	if err != nil {
+	//		if err != io.EOF {
+	//			fmt.Println(err)
+	//			return err
+	//		} else {
+	//			break
+	//		}
+	//	}
+	//	size, _ := dstFile.Write(buf[:n])
+	//	//fmt.Println(size)
+	//	//ds, _ := dstFile.Stat()
+	//	count += size
+	//	t := time.Now().Unix()
+	//	if t-latest >= 1 {
+	//		ch <- int64(count)
+	//		count = 0
+	//	}
+	//}
+	//if count > 0 {
+	//	ch <- int64(count)
+	//}
+	//return nil
 }
 
 func (c *Cli) DownloadFile(remotePath string, localDir string, localFileName string) error {
