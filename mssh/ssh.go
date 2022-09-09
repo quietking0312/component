@@ -88,7 +88,9 @@ func (c Cli) Run(command string) (string, error) {
 }
 
 func (c Cli) UploadFile(localFilePath string, remotePath string) error {
-	ftpClient, err := sftp.NewClient(c.client)
+	ftpClient, err := sftp.NewClient(c.client,
+		sftp.UseConcurrentWrites(true),
+		sftp.MaxPacketUnchecked(1<<16))
 	if err != nil {
 		return err
 	}
