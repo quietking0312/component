@@ -6,7 +6,11 @@ import (
 	"crypto/cipher"
 	"crypto/md5"
 	"encoding/base64"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
+	"os"
 )
 
 // 密钥必须是 16、24、32字节长度
@@ -17,7 +21,6 @@ var (
 // Get32MD5 获取字符串32位md5
 func Get32MD5(args []byte) string {
 	h := md5.New()
-	h.Size()
 	h.Write(args)
 	md5Str := fmt.Sprintf("%x", h.Sum(nil))
 	return md5Str
@@ -26,6 +29,15 @@ func Get32MD5(args []byte) string {
 // Get16MD5 获取字符串16位md5
 func Get16MD5(args []byte) string {
 	return Get32MD5(args)[8:24]
+}
+
+func GetFileMd5(file *os.File) (string, error) {
+	if file == nil {
+		return "", errors.New("file is null ptr")
+	}
+	h := md5.New()
+	_, _ = io.Copy(h, file)
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func padding(src []byte, blockSize int) []byte {
