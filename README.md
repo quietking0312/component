@@ -1,7 +1,10 @@
 # component
 
 ```
+引用方式1：
 go get github.com/quietking0312/component
+引用方式2：（推荐）
+git submodule add https://github.com/quietking0312/component
 ```
 
 
