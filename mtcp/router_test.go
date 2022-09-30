@@ -15,6 +15,6 @@ func TestRouter_Call(t *testing.T) {
 	}
 	pack := JsonPack{}
 	head, _ := pack.UnmarshalHead(nil)
-	r.Call(head, "hello")
+	r.Call(head, []byte("hello"))
 	time.Sleep(5)
 }

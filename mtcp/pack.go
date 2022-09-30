@@ -4,6 +4,10 @@ type JsonHead struct {
 	method string
 }
 
+func (head *JsonHead) Unmarshal([]byte) error {
+	return nil
+}
+
 func (head *JsonHead) GetDataLength() int64 {
 	return 0
 }
@@ -27,9 +31,9 @@ func (pack *JsonPack) UnmarshalMsg([]byte) (Msg, error) {
 	return nil, nil
 }
 
-func (pack *JsonPack) UnmarshalHead([]byte) (Head, error) {
-	h := JsonHead{
-		method: "hello",
-	}
-	return &h, nil
+func (pack *JsonPack) UnmarshalHead([]byte) (IHead, error) {
+	//h := &JsonHead{
+	//	method: "hello",
+	//}
+	return nil, nil
 }

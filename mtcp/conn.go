@@ -1,6 +1,7 @@
 package mtcp
 
 import (
+	"bufio"
 	"fmt"
 	"net"
 	"sync"
@@ -28,6 +29,8 @@ type Conn struct {
 	router   IRouter
 	msgCh    chan []byte
 	Settings *ConnSettings
+	Writer   *bufio.Writer
+	Reader   *bufio.Reader
 }
 
 func NewConn(factory func() (net.Conn, error), router IRouter, settings *ConnSettings) (*Conn, error) {
@@ -40,13 +43,9 @@ func NewConn(factory func() (net.Conn, error), router IRouter, settings *ConnSet
 	if settings.AutoReset {
 		go c.autoReset()
 	} else {
-		conn, err := factory()
-		if err != nil {
-			return nil, err
-		}
-		c.c = conn
+		err := c.Reset()
+		return nil, err
 	}
-	go c.readLoop()
 	return c, nil
 }
 
@@ -64,6 +63,12 @@ func (c *Conn) Closed() bool {
 	return c.isClosed
 }
 
+func (c *Conn) readNext(n int) {
+	for c.Reader.Buffered() < n {
+	}
+	return
+}
+
 func (c *Conn) readLoop() {
 	for {
 		select {
@@ -71,8 +76,11 @@ func (c *Conn) readLoop() {
 			if !c.isOpen {
 				continue
 			}
+			if c.Reader.Buffered() < int(c.headLen) {
+				continue
+			}
 			var head = make([]byte, c.headLen)
-			n, err := c.c.Read(head)
+			n, err := c.Reader.Read(head)
 			if err != nil {
 				c.isOpen = false
 				fmt.Println(err)
@@ -89,7 +97,7 @@ func (c *Conn) readLoop() {
 				continue
 			}
 			data := make([]byte, h.GetDataLength())
-			dn, err := c.c.Read(data)
+			dn, err := c.Reader.Read(data)
 			if err != nil {
 				c.isOpen = false
 				fmt.Println(err)
@@ -109,14 +117,14 @@ func (c *Conn) readLoop() {
 }
 
 func (c *Conn) Write(data []byte) error {
-	_, err := c.c.Write(data)
+	_, err := c.Writer.Write(data)
 	if err != nil {
 		if err == syscall.EINVAL {
 			c.isOpen = false
 		}
 		return err
 	}
-	return nil
+	return c.Writer.Flush()
 }
 
 // 自动重连
@@ -130,13 +138,20 @@ func (c *Conn) autoReset() {
 			if c.isOpen {
 				continue
 			}
-			conn, err := c.factory()
-			if err != nil {
-				c.isOpen = false
-			} else {
-				c.c = conn
-				c.isOpen = true
-			}
+			_ = c.Reset()
 		}
 	}
+}
+
+func (c *Conn) Reset() error {
+	conn, err := c.factory()
+	if err != nil {
+		c.isOpen = false
+		return err
+	}
+	c.c = conn
+	c.Reader = bufio.NewReader(c.c)
+	c.Writer = bufio.NewWriter(c.c)
+	c.isOpen = true
+	return nil
 }

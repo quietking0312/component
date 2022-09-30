@@ -1,4 +1,4 @@
-package mtest
+package main
 
 import (
 	"context"
@@ -16,4 +16,7 @@ func A() {
 	limiter.Wait(context.Background())
 	// 没有可用事件时 返回 reservation
 	limiter.Reserve()
+}
+
+func main() {
 }
