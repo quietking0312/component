@@ -7,7 +7,6 @@ import (
 	"crypto/md5"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -31,9 +30,10 @@ func Get16MD5(args []byte) string {
 	return Get32MD5(args)[8:24]
 }
 
-func GetFileMd5(file *os.File) (string, error) {
-	if file == nil {
-		return "", errors.New("file is null ptr")
+func GetFileMd5(filePath string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", err
 	}
 	h := md5.New()
 	_, _ = io.Copy(h, file)

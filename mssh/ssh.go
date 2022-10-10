@@ -159,7 +159,7 @@ func (c Cli) UploadFileAndProgress(srcFile io.Reader, remoteFile string, ch chan
 				ch <- diff
 			}
 		case <-done:
-			return nil
+			return err
 		}
 	}
 	//buf := make([]byte, 1<<15) // 每个数据包最大支持32kb
