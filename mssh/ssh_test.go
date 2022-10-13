@@ -2,7 +2,7 @@ package mssh
 
 import (
 	"fmt"
-	"mycomponent/mbar"
+	"github.com/quietking0312/component/mbar"
 	"os"
 	"path"
 	"testing"
@@ -38,7 +38,11 @@ func TestCli_Connect(t *testing.T) {
 }
 
 func TestCli_UploadFileAndProgress(t *testing.T) {
-	cli := &Cli{}
+	cli := &Cli{
+		User: "ubuntu",
+		Pwd:  "#nmp3?c;G+L!Wy2R",
+		Addr: "152.136.171.104:22",
+	}
 	if _, err := cli.Connect(); err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +54,7 @@ func TestCli_UploadFileAndProgress(t *testing.T) {
 	}
 	fmt.Println(result)
 
-	srcFile, err := os.Open("C:\\Users\\Administrator\\Downloads\\live_0810.zip")
+	srcFile, err := os.Open("D:\\myprojects\\ops\\ops.conf")
 	if err != nil {
 		fmt.Println("open:", err)
 		t.Fatal(err)
@@ -63,7 +67,7 @@ func TestCli_UploadFileAndProgress(t *testing.T) {
 
 	ch := make(chan int64, 1000)
 	go func() {
-		if err := cli.UploadFileAndProgress(srcFile, path.Join("/home/ubuntu", path.Base("live_0810.zip")), ch); err != nil {
+		if err := cli.UploadFileAndProgress(srcFile, path.Join("/data", path.Base("hello.conf")), ch); err != nil {
 			t.Error(err)
 			return
 		}
@@ -71,6 +75,7 @@ func TestCli_UploadFileAndProgress(t *testing.T) {
 	for {
 		select {
 		case s := <-ch:
+			fmt.Println(s)
 			b.Add(int(s))
 		}
 	}
