@@ -1,4 +1,4 @@
-package gogroup
+package mtool
 
 import (
 	"runtime"
