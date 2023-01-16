@@ -111,9 +111,14 @@ func InitLog(opts ...Option) error {
 	_logger = zap.New(newLoggerCore(logCfg),
 		zap.AddCaller(),
 		zap.AddCallerSkip(1),
-		//zap.AddStacktrace(getZapLevel(logCfg.LogLevel)),
+		zap.AddStacktrace(getZapLevel(logCfg.LogLevel)),
 		zap.Development())
 	return nil
+}
+
+// GetLogger 从现有的 _logger 对象拷贝一个日志对象
+func GetLogger(opts ...zap.Option) *zap.Logger {
+	return _logger.WithOptions(opts...)
 }
 
 func Debug(msg string, fields ...zap.Field) {
