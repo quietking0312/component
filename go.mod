@@ -8,6 +8,7 @@ require (
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/jmoiron/sqlx v1.3.5
+	github.com/mattn/go-sqlite3 v1.14.6
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/pkg/sftp v1.13.5
 	github.com/robfig/cron/v3 v3.0.0
