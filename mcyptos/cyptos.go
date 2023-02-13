@@ -13,9 +13,9 @@ import (
 )
 
 // 密钥必须是 16、24、32字节长度
-var (
-	key = []byte("devops---aespass")
-)
+//var (
+//	key = []byte("devops---aespass")
+//)
 
 // Get32MD5 获取字符串32位md5
 func Get32MD5(args []byte) string {
@@ -55,7 +55,7 @@ func unPadding(src []byte) []byte {
 	return src[:n-unPadNum]
 }
 
-func EncrypterAES(src []byte) ([]byte, error) {
+func EncrypterAES(key []byte, src []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -66,7 +66,7 @@ func EncrypterAES(src []byte) ([]byte, error) {
 	return src, nil
 }
 
-func DecryptAES(src []byte) ([]byte, error) {
+func DecryptAES(key []byte, src []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
