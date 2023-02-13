@@ -40,13 +40,13 @@ func GetFileMd5(filePath string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func padding(src []byte, blockSize int) []byte {
+func _padding(src []byte, blockSize int) []byte {
 	padNum := blockSize - len(src)%blockSize
 	pad := bytes.Repeat([]byte{byte(padNum)}, padNum)
 	return append(src, pad...)
 }
 
-func unPadding(src []byte) []byte {
+func _unPadding(src []byte) []byte {
 	n := len(src)
 	if n == 0 {
 		return src
@@ -60,8 +60,9 @@ func EncrypterAES(key []byte, src []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	src = padding(src, block.BlockSize())
-	blockMode := cipher.NewCBCEncrypter(block, key)
+	src = _padding(src, block.BlockSize())
+	iv := key[:aes.BlockSize]
+	blockMode := cipher.NewCBCEncrypter(block, iv)
 	blockMode.CryptBlocks(src, src)
 	return src, nil
 }
@@ -71,9 +72,10 @@ func DecryptAES(key []byte, src []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	blockMode := cipher.NewCBCDecrypter(block, key)
+	iv := key[:aes.BlockSize]
+	blockMode := cipher.NewCBCDecrypter(block, iv)
 	blockMode.CryptBlocks(src, src)
-	src = unPadding(src)
+	src = _unPadding(src)
 	return src, nil
 }
 
