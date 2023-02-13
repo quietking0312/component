@@ -5,6 +5,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/md5"
+	"crypto/sha1"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -38,6 +39,12 @@ func GetFileMd5(filePath string) (string, error) {
 	h := md5.New()
 	_, _ = io.Copy(h, file)
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func SHA1(args []byte) string {
+	s := sha1.New()
+	s.Write(args)
+	return fmt.Sprintf("%x", s.Sum(nil))
 }
 
 func _padding(src []byte, blockSize int) []byte {
