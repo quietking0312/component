@@ -67,7 +67,7 @@ func EncrypterAES(key []byte, src []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	src = _padding(src, block.BlockSize())
+	src = _padding(src, len(key))
 	iv := key[:aes.BlockSize]
 	blockMode := cipher.NewCBCEncrypter(block, iv)
 	blockMode.CryptBlocks(src, src)
