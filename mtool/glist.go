@@ -1,6 +1,6 @@
 package mtool
 
-type CompareFunc func(interface{}, interface{}) int
+type CompareFunc func(any, any) int
 
 /*
 使用方法
@@ -12,7 +12,7 @@ IndexOf(a, "b", func(a interface{}, b interface{}) int {
 }
 */
 
-func IndexOf(list []interface{}, i interface{}, cmp CompareFunc) int {
+func IndexOf(list []any, i any, cmp CompareFunc) int {
 	for a := 0; a < len(list); a++ {
 		if cmp(i, list[a]) == 0 {
 			return a
