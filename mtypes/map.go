@@ -5,23 +5,23 @@ import (
 )
 
 type Map struct {
-	Data map[any]any
-	Keys []any
-	sync.RWMutex
+	data map[any]any
+	keys []any
+	mu   sync.RWMutex
 }
 
 func NewMap(n int) *Map {
 	return &Map{
-		Data: make(map[any]any, n),
-		Keys: []any{},
+		data: make(map[any]any, n),
+		keys: []any{},
 	}
 }
 
 func (m *Map) Range(fn func(k, v any) bool) {
-	m.Lock()
-	defer m.Unlock()
-	for _, k := range m.Keys {
-		v, _ := m.Data[k]
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, k := range m.keys {
+		v, _ := m.data[k]
 		if !fn(k, v) {
 			break
 		}
@@ -29,35 +29,39 @@ func (m *Map) Range(fn func(k, v any) bool) {
 }
 
 func (m *Map) Set(k, v any) {
-	m.Lock()
-	defer m.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	var newKeys []any
-	for _, key := range m.Keys {
+	for _, key := range m.keys {
 		if key != k {
 			newKeys = append(newKeys, key)
 		}
 	}
-	m.Keys = newKeys
-	m.Keys = append(m.Keys, k)
-	m.Data[k] = v
+	m.keys = newKeys
+	m.keys = append(m.keys, k)
+	m.data[k] = v
 }
 
 func (m *Map) Get(k any) (v any, ok bool) {
-	m.RLock()
-	defer m.RUnlock()
-	v, ok = m.Data[k]
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	v, ok = m.data[k]
 	return v, ok
 }
 
 func (m *Map) Delete(k any) {
-	m.Lock()
-	defer m.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	var newKeys []any
-	for _, key := range m.Keys {
+	for _, key := range m.keys {
 		if key != k {
 			newKeys = append(newKeys, key)
 		}
 	}
-	m.Keys = newKeys
-	delete(m.Data, k)
+	m.keys = newKeys
+	delete(m.data, k)
+}
+
+func (m *Map) Keys() []any {
+	return m.keys
 }
