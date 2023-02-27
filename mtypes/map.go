@@ -65,3 +65,7 @@ func (m *Map) Delete(k any) {
 func (m *Map) Keys() []any {
 	return m.keys
 }
+
+func (m *Map) Length() int {
+	return len(m.keys)
+}
