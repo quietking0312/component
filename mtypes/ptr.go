@@ -1,12 +1,10 @@
 package mtypes
 
 type T interface {
-	string | int | int64 | int32 | int16 | int8 | uint | uint16 | uint32 | uint64 | uint8
+	string | int | int64 | int32 | int16 | int8 | uint | uint16 | uint32 | uint64 | uint8 | any
 }
 
-type Ptr[k T] *k
-
-func NewPtr[k T](s k) Ptr[k] {
+func NewPtr[k T](s k) *k {
 	return &s
 }
 
