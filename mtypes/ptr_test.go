@@ -10,12 +10,13 @@ func TestNewPtr(t *testing.T) {
 		A *string
 		B *int
 	}{
-		A: NewPtr[string]("hello"),
-		B: NewPtr[int](55),
+		A: Ptr[string]("hello"),
+		B: Ptr[int](55),
 	}
 	fmt.Println(*a.A)
 	fmt.Println(*a.B)
 
-	c := NewPtr("hello")
+	c := Ptr(a)
 	fmt.Println(Value(c))
+
 }
