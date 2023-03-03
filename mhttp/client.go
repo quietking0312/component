@@ -1,6 +1,7 @@
 package mhttp
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/url"
@@ -25,6 +26,7 @@ type Request struct {
 	Args   map[string][]string
 	Body   io.Reader
 	Header http.Header
+	Ctx    context.Context
 }
 
 type RespFunc func(response *http.Response) error
@@ -41,7 +43,10 @@ func (cli *Client) Do(request Request, respFunc RespFunc) error {
 		return err
 	}
 	uri.RawQuery = argsData
-	req, err := http.NewRequest(request.Method, uri.String(), request.Body)
+	if request.Ctx == nil {
+		request.Ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(request.Ctx, request.Method, uri.String(), request.Body)
 	if err != nil {
 		return err
 	}
