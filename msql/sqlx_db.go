@@ -56,34 +56,19 @@ func (_sqlxDB *SqlxDB) SqlxBeginTx(cb func(tx *sqlx.Tx, ctx context.Context) err
 func (_sqlxDB *SqlxDB) SqlxNameExec(format string, arg interface{}) (sql.Result, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), _sqlxDB.DBCfg.MaxQueryTime)
 	defer cancel()
-	namedStmt, err := _sqlxDB.SqlxDB.PrepareNamedContext(ctx, format)
-	if err != nil {
-		return nil, err
-	}
-	defer namedStmt.Close()
-	return namedStmt.ExecContext(ctx, arg)
+	return _sqlxDB.SqlxDB.NamedExecContext(ctx, format, arg)
 }
 
 func (_sqlxDB *SqlxDB) SqlxExec(format string, args ...interface{}) (sql.Result, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), _sqlxDB.DBCfg.MaxQueryTime)
 	defer cancel()
-	stmt, err := _sqlxDB.SqlxDB.PreparexContext(ctx, format)
-	if err != nil {
-		return nil, err
-	}
-	defer stmt.Close()
-	return stmt.ExecContext(ctx, args...)
+	return _sqlxDB.SqlxDB.ExecContext(ctx, format, args...)
 }
 
 func (_sqlxDB *SqlxDB) SqlxNameQuery(format string, args interface{}, cb func(rows *sqlx.Rows) error) error {
 	ctx, cancel := context.WithTimeout(context.Background(), _sqlxDB.DBCfg.MaxQueryTime)
 	defer cancel()
-	namedStmt, err := _sqlxDB.SqlxDB.PrepareNamedContext(ctx, format)
-	if err != nil {
-		return err
-	}
-	defer namedStmt.Close()
-	rows, err := namedStmt.QueryxContext(ctx, args)
+	rows, err := _sqlxDB.SqlxDB.NamedQueryContext(ctx, format, args)
 	if err != nil {
 		return err
 	}
@@ -95,24 +80,14 @@ func (_sqlxDB *SqlxDB) SqlxNameQuery(format string, args interface{}, cb func(ro
 func (_sqlxDB *SqlxDB) SqlxQueryRow(format string, args []interface{}, cb func(row *sqlx.Row) error) error {
 	ctx, cancel := context.WithTimeout(context.Background(), _sqlxDB.DBCfg.MaxQueryTime)
 	defer cancel()
-	stmt, err := _sqlxDB.SqlxDB.PreparexContext(ctx, format)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-	row := stmt.QueryRowxContext(ctx, args...)
+	row := _sqlxDB.SqlxDB.QueryRowxContext(ctx, format, args...)
 	return cb(row)
 }
 
 func (_sqlxDB *SqlxDB) SqlxQuery(format string, args []interface{}, cb func(rows *sqlx.Rows) error) error {
 	ctx, cancel := context.WithTimeout(context.Background(), _sqlxDB.DBCfg.MaxQueryTime)
 	defer cancel()
-	stmt, err := _sqlxDB.SqlxDB.PreparexContext(ctx, format)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-	rows, err := stmt.QueryxContext(ctx, args...)
+	rows, err := _sqlxDB.SqlxDB.QueryxContext(ctx, format, args...)
 	if err != nil {
 		return err
 	}
@@ -124,23 +99,13 @@ func (_sqlxDB *SqlxDB) SqlxQuery(format string, args []interface{}, cb func(rows
 func (_sqlxDB *SqlxDB) SqlxGet(dest interface{}, format string, args ...interface{}) error {
 	ctx, cancel := context.WithTimeout(context.Background(), _sqlxDB.DBCfg.MaxQueryTime)
 	defer cancel()
-	namedStmt, err := _sqlxDB.SqlxDB.PreparexContext(ctx, format)
-	if err != nil {
-		return err
-	}
-	defer namedStmt.Close()
-	return namedStmt.GetContext(ctx, dest, args...)
+	return _sqlxDB.SqlxDB.GetContext(ctx, dest, format, args...)
 }
 
 func (_sqlxDB *SqlxDB) SqlxSelect(dest interface{}, format string, args ...interface{}) error {
 	ctx, cancel := context.WithTimeout(context.Background(), _sqlxDB.DBCfg.MaxQueryTime)
 	defer cancel()
-	namedStmt, err := _sqlxDB.SqlxDB.PreparexContext(ctx, format)
-	if err != nil {
-		return err
-	}
-	defer namedStmt.Close()
-	return namedStmt.SelectContext(ctx, dest, args...)
+	return _sqlxDB.SqlxDB.SelectContext(ctx, dest, format, args...)
 }
 
 func (_sqlxDB *SqlxDB) In(format string, args ...interface{}) (string, []interface{}, error) {
