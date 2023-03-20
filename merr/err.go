@@ -11,23 +11,23 @@ type Error interface {
 }
 
 type MErr struct {
-	code string
-	msg  error
+	Code string
+	Msg  error
 }
 
 type BaseError func() MErr
 
 func (b BaseError) Code() string {
-	return b().code
+	return b().Code
 }
 
 func (b BaseError) Error() string {
 	base := b()
-	return fmt.Sprintf("Error %s: %s", base.code, base.msg.Error())
+	return fmt.Sprintf("Error %s: %s", base.Code, base.Msg.Error())
 }
 
 func (b BaseError) Unwrap() error {
-	return b().msg
+	return b().Msg
 }
 
 type MError struct {
@@ -39,8 +39,8 @@ func NewMErr(code string, format string, a ...any) Error {
 	m := MError{}
 	m.BaseError = func() MErr {
 		return MErr{
-			code: code,
-			msg:  e,
+			Code: code,
+			Msg:  e,
 		}
 	}
 	return m

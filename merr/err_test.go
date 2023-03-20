@@ -11,5 +11,4 @@ func TestMErr_GetMsg(t *testing.T) {
 	fmt.Println(a.Code())
 	fmt.Println(a.Error())
 	fmt.Println(errors.Unwrap(a))
-
 }
