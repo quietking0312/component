@@ -86,6 +86,7 @@ func newLoggerCore(logCfg *LogConfig) zapcore.Core {
 		MessageKey:     "msg",
 		StacktraceKey:  "stacktrace",
 		LineEnding:     zapcore.DefaultLineEnding,
+		FunctionKey:    "func",
 		EncodeLevel:    zapcore.LowercaseLevelEncoder,
 		EncodeTime:     zapcore.TimeEncoderOfLayout("2006-01-02T15:04:05.000Z0700"),
 		EncodeDuration: zapcore.SecondsDurationEncoder,
