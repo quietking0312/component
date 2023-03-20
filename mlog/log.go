@@ -110,8 +110,8 @@ func InitLog(opts ...Option) error {
 		opt(logCfg)
 	}
 	_logger = zap.New(newLoggerCore(logCfg),
-		zap.AddCaller(),
-		zap.AddCallerSkip(1),
+		//zap.AddCaller(),
+		//zap.AddCallerSkip(1),
 		//zap.AddStacktrace(getZapLevel(logCfg.LogLevel)),
 		zap.Development())
 	return nil
