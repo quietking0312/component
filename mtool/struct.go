@@ -66,14 +66,3 @@ func CopyStruct2(src any, dst any, opts ...Options) error {
 	}
 	return nil
 }
-
-type A struct {
-	Name string `json:"name"`
-	Age  int
-}
-
-type B struct {
-	Name  string `json:"name"`
-	Age   int
-	Phone int
-}

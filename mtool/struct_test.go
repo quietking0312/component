@@ -6,6 +6,17 @@ import (
 	"testing"
 )
 
+type A struct {
+	Name string `json:"name"`
+	Age  int
+}
+
+type B struct {
+	Name  string `json:"name"`
+	Age   int
+	Phone int
+}
+
 func TestCopy(t *testing.T) {
 	a := A{
 		Age:  5,
