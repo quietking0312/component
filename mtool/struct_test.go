@@ -17,7 +17,19 @@ type B struct {
 	Phone int
 }
 
-func TestCopy(t *testing.T) {
+func TestCopyStruct(t *testing.T) {
+	a := A{
+		Age:  5,
+		Name: "aaa",
+	}
+	b := B{}
+
+	fmt.Println(CopyStruct(a, &b))
+	fmt.Println(a)
+	fmt.Println(b)
+}
+
+func TestCopyStruct2(t *testing.T) {
 	a := A{
 		Age:  5,
 		Name: "aaa",
