@@ -45,3 +45,35 @@ func TestCopyStruct2(t *testing.T) {
 	fmt.Println(a)
 	fmt.Println(b)
 }
+
+type C struct {
+	B
+}
+
+func TestCopyStruct3(t *testing.T) {
+	a := A{
+		Age:  5,
+		Name: "aaa",
+	}
+	b := C{}
+
+	fmt.Println(CopyStruct(a, &b))
+	fmt.Println(a)
+	fmt.Println(b)
+}
+
+type D struct {
+	Age int64
+}
+
+func TestCopyStruct4(t *testing.T) {
+	a := A{
+		Age:  5,
+		Name: "aaa",
+	}
+	b := D{}
+
+	fmt.Println(CopyStruct(a, &b))
+	fmt.Println(a)
+	fmt.Println(b)
+}

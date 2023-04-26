@@ -18,12 +18,15 @@ import (
 //	key = []byte("devops---aespass")
 //)
 
+func GetMD5(arg []byte) []byte {
+	h := md5.New()
+	h.Write(arg)
+	return h.Sum(nil)
+}
+
 // Get32MD5 获取字符串32位md5
 func Get32MD5(args []byte) string {
-	h := md5.New()
-	h.Write(args)
-	md5Str := fmt.Sprintf("%x", h.Sum(nil))
-	return md5Str
+	return fmt.Sprintf("%x", GetMD5(args))
 }
 
 // Get16MD5 获取字符串16位md5
