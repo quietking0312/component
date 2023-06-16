@@ -5,6 +5,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/md5"
+	"crypto/sha1"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -13,16 +14,19 @@ import (
 )
 
 // 密钥必须是 16、24、32字节长度
-var (
-	key = []byte("devops---aespass")
-)
+//var (
+//	key = []byte("devops---aespass")
+//)
+
+func GetMD5(arg []byte) []byte {
+	h := md5.New()
+	h.Write(arg)
+	return h.Sum(nil)
+}
 
 // Get32MD5 获取字符串32位md5
 func Get32MD5(args []byte) string {
-	h := md5.New()
-	h.Write(args)
-	md5Str := fmt.Sprintf("%x", h.Sum(nil))
-	return md5Str
+	return fmt.Sprintf("%x", GetMD5(args))
 }
 
 // Get16MD5 获取字符串16位md5
@@ -40,13 +44,19 @@ func GetFileMd5(filePath string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func padding(src []byte, blockSize int) []byte {
+func SHA1(args []byte) string {
+	s := sha1.New()
+	s.Write(args)
+	return fmt.Sprintf("%x", s.Sum(nil))
+}
+
+func _padding(src []byte, blockSize int) []byte {
 	padNum := blockSize - len(src)%blockSize
 	pad := bytes.Repeat([]byte{byte(padNum)}, padNum)
 	return append(src, pad...)
 }
 
-func unPadding(src []byte) []byte {
+func _unPadding(src []byte) []byte {
 	n := len(src)
 	if n == 0 {
 		return src
@@ -55,25 +65,27 @@ func unPadding(src []byte) []byte {
 	return src[:n-unPadNum]
 }
 
-func EncrypterAES(src []byte) ([]byte, error) {
+func EncrypterAES(key []byte, src []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
 	}
-	src = padding(src, block.BlockSize())
-	blockMode := cipher.NewCBCEncrypter(block, key)
+	src = _padding(src, len(key))
+	iv := key[:aes.BlockSize]
+	blockMode := cipher.NewCBCEncrypter(block, iv)
 	blockMode.CryptBlocks(src, src)
 	return src, nil
 }
 
-func DecryptAES(src []byte) ([]byte, error) {
+func DecryptAES(key []byte, src []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
 	}
-	blockMode := cipher.NewCBCDecrypter(block, key)
+	iv := key[:aes.BlockSize]
+	blockMode := cipher.NewCBCDecrypter(block, iv)
 	blockMode.CryptBlocks(src, src)
-	src = unPadding(src)
+	src = _unPadding(src)
 	return src, nil
 }
 

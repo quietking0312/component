@@ -3,7 +3,7 @@ package mredis
 import (
 	"context"
 	"fmt"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"sync"
 	"testing"
 	"time"
@@ -26,7 +26,7 @@ func TestNewRedisClient(t *testing.T) {
 	go func() {
 		wg.Add(1)
 		defer wg.Done()
-		err1 := _client.Watch(context.Background(), func(tx *redis.Tx) error {
+		txFunc := func(tx *redis.Tx) error {
 			cmds, err := tx.TxPipelined(context.Background(), func(pipeliner redis.Pipeliner) error {
 				pipeResult := pipeliner.Set(context.Background(), "key", "11", 10*time.Second).Err()
 
@@ -41,7 +41,8 @@ func TestNewRedisClient(t *testing.T) {
 				fmt.Println(cmd.String())
 			}
 			return nil
-		}, "key")
+		}
+		err1 := _client.Watch(context.Background(), txFunc, "key")
 		if err1 != nil {
 			fmt.Println("err1", err1)
 			t.Fatal(err1)

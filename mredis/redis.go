@@ -2,7 +2,7 @@ package mredis
 
 import (
 	"context"
-	redis "github.com/go-redis/redis/v8"
+	redis "github.com/redis/go-redis/v9"
 	"runtime"
 	"time"
 )
@@ -27,14 +27,8 @@ func defaultRedisOption() *redis.Options {
 		PoolSize: runtime.NumCPU() * 10,
 		// 空闲连接数
 		MinIdleConns: 5,
-		// 连接过时 时间
-		MaxConnAge: 0 * time.Hour,
 		// 池超时
 		PoolTimeout: 4 * time.Second,
-		// 空闲超时时间
-		IdleTimeout: 5 * time.Minute,
-		// 空闲连接超时检测 频率
-		IdleCheckFrequency: 1 * time.Minute,
 		// TLS 设置
 		TLSConfig: nil,
 		// 限制器
@@ -78,14 +72,8 @@ func defaultRedisClusterOption() *redis.ClusterOptions {
 		PoolSize: runtime.NumCPU() * 10,
 		// 空闲连接数
 		MinIdleConns: 5,
-		// 连接过时 时间
-		MaxConnAge: 0 * time.Hour,
 		// 池超时
 		PoolTimeout: 4 * time.Second,
-		// 空闲超时时间
-		IdleTimeout: 5 * time.Minute,
-		// 空闲连接超时检测 频率
-		IdleCheckFrequency: 1 * time.Minute,
 		// TLS 设置
 		TLSConfig: nil,
 	}

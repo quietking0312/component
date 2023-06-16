@@ -3,18 +3,11 @@ package mtcp
 import (
 	"fmt"
 	"testing"
-	"time"
 )
 
-func TestRouter_Call(t *testing.T) {
-	r := Router{
-		r: make(map[string]func(msg Msg)),
-	}
-	r.r["hello"] = func(msg Msg) {
-		fmt.Println(msg)
-	}
-	pack := JsonPack{}
-	head, _ := pack.UnmarshalHead(nil)
-	r.Call(head, []byte("hello"))
-	time.Sleep(5)
+func TestNewNode(t *testing.T) {
+	router := NewRouter()
+	router.AddRoute("/a/a/a/a/a")
+	router.AddRoute("/b/c/d")
+	fmt.Println(router.root.children[0].children[0])
 }

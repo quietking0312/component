@@ -86,6 +86,7 @@ func newLoggerCore(logCfg *LogConfig) zapcore.Core {
 		MessageKey:     "msg",
 		StacktraceKey:  "stacktrace",
 		LineEnding:     zapcore.DefaultLineEnding,
+		FunctionKey:    "func",
 		EncodeLevel:    zapcore.LowercaseLevelEncoder,
 		EncodeTime:     zapcore.TimeEncoderOfLayout("2006-01-02T15:04:05.000Z0700"),
 		EncodeDuration: zapcore.SecondsDurationEncoder,
@@ -109,11 +110,20 @@ func InitLog(opts ...Option) error {
 		opt(logCfg)
 	}
 	_logger = zap.New(newLoggerCore(logCfg),
-		zap.AddCaller(),
-		zap.AddCallerSkip(1),
+		//zap.AddCaller(),
+		//zap.AddCallerSkip(1),
 		//zap.AddStacktrace(getZapLevel(logCfg.LogLevel)),
 		zap.Development())
 	return nil
+}
+
+// GetLogger 从现有的 _logger 对象拷贝一个日志对象
+func GetLogger(opts ...zap.Option) *zap.Logger {
+	return _logger.WithOptions(opts...)
+}
+
+func Sync() error {
+	return _logger.Sync()
 }
 
 func Debug(msg string, fields ...zap.Field) {

@@ -1,68 +1,28 @@
 package mtcp
 
 import (
+	"bufio"
 	"fmt"
 	"net"
-	"sync"
 )
 
-type Token interface {
-}
-
-type Server struct {
-	lin           net.Listener
-	MaxConnNumber uint16
-	ConnNumber    uint16
-	conns         map[Token]*Conn
-	sync.Mutex
-}
-
-func NewServer(lin net.Listener) *Server {
-	return &Server{}
-}
-
-func (ser *Server) Accept() error {
-
-	for {
-		conn, err := ser.lin.Accept()
-		if err != nil {
-			return err
-		}
-		c, _ := NewConn(func() (net.Conn, error) {
-			return conn, nil
-		}, nil, nil)
-		_ = ser.register("hello", c)
+func server() {
+	listen, err := net.Listen("tcp", "127.0.0.1:8000")
+	if err != nil {
+		return
 	}
-}
-
-func (ser *Server) register(token Token, conn *Conn) error {
-	ser.Lock()
-	defer ser.Unlock()
-	if ser.ConnNumber >= ser.MaxConnNumber {
-		return fmt.Errorf("conn max")
+	defer listen.Close()
+	conn, err := listen.Accept()
+	if err != nil {
+		return
 	}
-	if _, ok := ser.conns[token]; ok {
-		return fmt.Errorf("%v is exists", token)
+	defer conn.Close()
+	read := bufio.NewReaderSize(conn, 4096)
+	buf := make([]byte, 4096)
+	n, err := read.Read(buf)
+	if err != nil {
+		return
 	}
-	ser.ConnNumber += 1
-	ser.conns[token] = conn
-	return nil
-}
-
-func (ser *Server) Send(token Token, msg Msg) error {
-	c, ok := ser.conns[token]
-	if !ok {
-		return fmt.Errorf("%v not is exists", token)
-	}
-	err := c.Write([]byte(""))
-	return err
-}
-
-func (ser *Server) SendAll(msg Msg) error {
-	for token, _ := range ser.conns {
-		go func(token Token) {
-			ser.Send(token, msg)
-		}(token)
-	}
-	return nil
+	conn.Write(buf[:n])
+	fmt.Println(string(buf[:n]))
 }

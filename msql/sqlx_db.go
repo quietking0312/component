@@ -12,7 +12,7 @@ var (
 
 type SqlxDB struct {
 	SqlxDB *sqlx.DB
-	*DB
+	DBCfg  *DBCfg
 }
 
 func NewSqlxDB(opts ...Option) (*SqlxDB, error) {
@@ -22,7 +22,7 @@ func NewSqlxDB(opts ...Option) (*SqlxDB, error) {
 	}
 	_sqlxDB = &SqlxDB{
 		SqlxDB: sqlx.NewDb(db.DB, db.DBCfg.DriveName),
-		DB:     db,
+		DBCfg:  db.DBCfg,
 	}
 	return _sqlxDB, nil
 }
