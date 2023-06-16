@@ -26,14 +26,13 @@ func NewDB(opts ...Option) (*DB, error) {
 	db.SetMaxOpenConns(cfg.MaxOpenConnection)
 	db.SetMaxIdleConns(cfg.MaxIdleConnection)
 	db.SetConnMaxIdleTime(cfg.MaxQueryTime)
-	for i := 0; i < cfg.MaxIdleConnection; i++ {
-		if err := db.Ping(); err != nil {
-			return nil, err
-		}
-	}
 	_db = &DB{
 		DB:    db,
 		DBCfg: cfg,
 	}
 	return _db, err
+}
+
+func (db *DB) Ping() error {
+	return db.DB.Ping()
 }

@@ -25,6 +25,7 @@ type Conn struct {
 	isClosed bool
 	close    chan bool
 	isOpen   bool
+	a        string
 	// 路由
 	router   IRouter
 	msgCh    chan []byte
