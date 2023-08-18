@@ -3,8 +3,8 @@ package mgin
 import (
 	"errors"
 	"github.com/gin-gonic/gin"
+	"github.com/quietking0312/component/mlog"
 	"go.uber.org/zap"
-	"mycomponent/mlog"
 )
 
 type Middleware struct {

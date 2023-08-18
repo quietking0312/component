@@ -28,14 +28,14 @@ func defaultOpts() *TimeOpts {
 	}
 }
 
-func GetTime(opts ...func(opt *TimeOpts)) int64 {
+func GetTime(opts ...func(opt *TimeOpts)) time.Time {
 	opt := defaultOpts()
 	for _, o := range opts {
 		o(opt)
 	}
 	var timeObj = time.Now()
 	timeObj = timeObj.AddDate(opt.Years, opt.Months, opt.Days)
-	return timeObj.Unix()
+	return timeObj
 }
 
 // GetWeek 获取当前星期
