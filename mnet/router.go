@@ -1,4 +1,4 @@
-package mtcp
+package mnet
 
 import (
 	"net/http"
