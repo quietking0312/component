@@ -1,17 +1,16 @@
 package mstore
 
 import (
-	"context"
 	"fmt"
 	"sync"
-	"time"
 )
 
 type Store struct {
 	data   sync.Map
-	filter map[string]func(key string)
+	filter map[string][]WatchFunc
 	mu     sync.Mutex
 }
+type WatchFunc func(oldV, newV any)
 
 func (s *Store) Get(Key string) (interface{}, error) {
 	if v, ok := s.data.Load(Key); ok {
@@ -22,31 +21,26 @@ func (s *Store) Get(Key string) (interface{}, error) {
 
 func (s *Store) Set(k string, v interface{}) error {
 	oldValue, _ := s.data.Load(k)
+	s.data.Store(k, v)
 	if oldValue != v {
-		for _, fn := range s.filter {
-			fn(k)
+		fcs := s.filter[k]
+		for _, fc := range fcs {
+			go fc(oldValue, v)
 		}
 	}
-	s.data.Store(k, v)
 	return nil
 }
 
-func (s *Store) Watch(ctx context.Context, key *string) {
-	if s.filter == nil {
-		s.filter = make(map[string]func(key string))
-	}
-	id := fmt.Sprintf("watch-%s", time.Now())
-	ch := make(chan string, 10)
+func (s *Store) Register(key string, fc WatchFunc) {
 	s.mu.Lock()
-	s.filter[id] = func(key string) {
-		ch <- key
+	defer s.mu.Unlock()
+	if s.filter == nil {
+		s.filter = make(map[string][]WatchFunc)
 	}
-	s.mu.Unlock()
-	select {
-	case <-ctx.Done():
-		return
-	case k := <-ch:
-		*key = k
-		return
+	_, ok := s.filter[key]
+	if !ok {
+		s.filter[key] = make([]WatchFunc, 0)
 	}
+	s.filter[key] = append(s.filter[key], fc)
+
 }
