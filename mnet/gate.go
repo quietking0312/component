@@ -3,6 +3,7 @@ package mnet
 import (
 	"fmt"
 	"github.com/google/uuid"
+	"net"
 )
 
 type Gate struct {
@@ -15,6 +16,8 @@ func (gate *Gate) Run(closeFlag chan bool) {
 type Agent interface {
 	Run()
 	Auth() (string, error)
+	Write(any)
+	LocalAddr() net.Addr
 	Close()
 }
 
@@ -25,11 +28,13 @@ type agent struct {
 }
 
 type PackParser interface {
-	Unmarshal([]byte) (err error)
+	Unmarshal([]byte) (msg *Msg, err error)
 	Marshal(data any) ([]byte, error)
+	Route(msg *Msg, a Agent)
 }
 
 func (a *agent) Auth() (string, error) {
+	// TODO 获取第一个数据包进行校验
 	return uuid.New().String(), nil
 }
 
@@ -40,10 +45,12 @@ func (a *agent) Run() {
 			a.log.Error(fmt.Errorf("read message, %v", err))
 			break
 		}
-		if err := a.parser.Unmarshal(msg); err != nil {
+		m, err := a.parser.Unmarshal(msg)
+		if err != nil {
 			a.log.Error(fmt.Errorf("unmarshal message, %v", err))
 			break
 		}
+		a.parser.Route(m, a)
 	}
 }
 
@@ -59,4 +66,9 @@ func (a *agent) Write(msg any) {
 }
 
 func (a *agent) Close() {
+	a.conn.Close()
+}
+
+func (a *agent) LocalAddr() net.Addr {
+	return a.conn.LocalAddr()
 }

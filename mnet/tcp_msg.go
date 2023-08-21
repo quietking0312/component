@@ -15,7 +15,12 @@ type MsgParser struct {
 func NewMsgParser(msgLen uint8) *MsgParser {
 	p := new(MsgParser)
 	p.msgLen = msgLen
-	p.littleEndian = false
+	p.littleEndian = true
+	return p
+}
+
+func (p *MsgParser) SetLittleEndian(l bool) *MsgParser {
+	p.littleEndian = l
 	return p
 }
 

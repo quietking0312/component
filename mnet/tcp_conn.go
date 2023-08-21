@@ -2,6 +2,7 @@ package mnet
 
 import (
 	"fmt"
+	"io"
 	"net"
 )
 
@@ -10,7 +11,12 @@ type TCPConn struct {
 	conn      net.Conn
 	closeFlag bool
 	log       Log
-	msgParser *MsgParser
+	msgParser TCPMsgParser
+}
+
+type TCPMsgParser interface {
+	Read(conn io.ReadCloser) ([]byte, error)
+	Write(conn io.WriteCloser, b []byte) (int, error)
 }
 
 func newTCPConn(id string, conn net.Conn, log Log) *TCPConn {
@@ -23,8 +29,14 @@ func newTCPConn(id string, conn net.Conn, log Log) *TCPConn {
 	return tcpConn
 }
 
-func (c *TCPConn) SetId(id string) {
+func (c *TCPConn) SetMsgParser(parser TCPMsgParser) *TCPConn {
+	c.msgParser = parser
+	return c
+}
+
+func (c *TCPConn) SetId(id string) *TCPConn {
 	c.Id = id
+	return c
 }
 
 func (c *TCPConn) Read() (int, []byte, error) {
@@ -49,4 +61,8 @@ func (c *TCPConn) Close() error {
 	}
 	c.closeFlag = true
 	return nil
+}
+
+func (c *TCPConn) LocalAddr() net.Addr {
+	return c.conn.LocalAddr()
 }

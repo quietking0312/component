@@ -9,13 +9,15 @@ import (
 )
 
 type WSServer struct {
-	Addr       string
-	logger     Log
+	Addr    string
+	LocalIP string
+	logger  Log
+
 	NewAgent   func(*WSConn) Agent
 	ln         net.Listener
 	upgrader   websocket.Upgrader
 	MaxConnNum int
-
+	Auth       func(http.ResponseWriter, *http.Request) (string, error) // http 用户校验 为nil时调用 Agent 的用户校验
 	conns      map[string]*WSConn
 	mutexConns sync.Mutex
 	wg         sync.WaitGroup
@@ -35,24 +37,31 @@ func (ws *WSServer) SetLogger(log Log) {
 }
 
 func (ws *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	var connId string
+	var err error
+	if ws.Auth != nil {
+		connId, err = ws.Auth(w, r)
+		if err != nil {
+			return
+		}
+	}
 
 	conn, err := ws.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
-	conn.SetReadLimit(65535)
 	ws.wg.Add(1)
 	defer ws.wg.Done()
-
 	wsConn := newWSConn("", conn, ws.logger)
 	if oldConn, ok := ws.conns[wsConn.Id]; ok {
 		oldConn.Close()
 	}
 	ag := ws.NewAgent(wsConn)
-
-	connId, err := ag.Auth()
-	if err != nil {
-		return
+	if connId != "" {
+		connId, err = ag.Auth()
+		if err != nil {
+			return
+		}
 	}
 	wsConn.SetId(connId)
 	if len(ws.conns) >= ws.MaxConnNum {
@@ -75,11 +84,13 @@ func (ws *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (ws *WSServer) Serve(ln net.Listener) {
 	ws.Addr = ln.Addr().String()
+	ws.LocalIP = GetLocalIP()
 	ws.ln = ln
 	httpServer := &http.Server{
 		Addr:    ws.Addr,
 		Handler: ws,
 	}
+	ws.logger.Info(fmt.Sprintf("server start ip:%s addr: %s", ws.LocalIP, ws.Addr))
 	httpServer.Serve(ln)
 }
 

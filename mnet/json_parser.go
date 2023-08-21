@@ -15,21 +15,21 @@ type Msg struct {
 	Data []byte
 }
 
-func (p *JSONParser) Unmarshal(b []byte) error {
+func (p *JSONParser) Unmarshal(b []byte) (*Msg, error) {
 	var m map[string]json.RawMessage
 	err := json.Unmarshal(b, &m)
 	if err != nil {
 		fmt.Println(err)
-		return err
+		return nil, err
 	}
 	for msgId, message := range m {
 		msg := &Msg{
 			Id:   []byte(msgId),
 			Data: message,
 		}
-		p.Route(msg)
+		return msg, nil
 	}
-	return nil
+	return nil, nil
 }
 
 func (p *JSONParser) Marshal(data any) ([]byte, error) {
@@ -49,6 +49,6 @@ func (p *JSONParser) Marshal(data any) ([]byte, error) {
 	return json.Marshal(m)
 }
 
-func (p *JSONParser) Route(msg *Msg) {
-	fmt.Println(string(msg.Id), string(msg.Data))
+func (p *JSONParser) Route(msg *Msg, a Agent) {
+	fmt.Println(string(msg.Id), string(msg.Data), a.LocalAddr().String())
 }

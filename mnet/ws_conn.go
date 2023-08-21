@@ -3,11 +3,13 @@ package mnet
 import (
 	"fmt"
 	"github.com/gorilla/websocket"
+	"net"
 )
 
 type WSConn struct {
 	Id        string
 	conn      *websocket.Conn
+	readLimit int64
 	closeFlag bool
 	log       Log
 }
@@ -18,7 +20,8 @@ func newWSConn(id string, conn *websocket.Conn, log Log) *WSConn {
 	wsConn.conn = conn
 	wsConn.closeFlag = false
 	wsConn.log = log
-
+	wsConn.readLimit = 65535
+	wsConn.conn.SetReadLimit(wsConn.readLimit)
 	return wsConn
 }
 
@@ -51,4 +54,8 @@ func (ws *WSConn) Write(b []byte) (int, error) {
 		return 0, err
 	}
 	return len(b), nil
+}
+
+func (ws *WSConn) LocalAddr() net.Addr {
+	return ws.conn.LocalAddr()
 }
