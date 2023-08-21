@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+option go_package = "./;pb";
+package pb;
+
+enum s2c{
+  pong = 0;
+}
+
+enum c2s {
+  ping = 0;
+}
+
+message Ping {
+  string Args = 1;
+}
+
+message Pong {
+  string Data = 1;
+}

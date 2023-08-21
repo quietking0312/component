@@ -11,7 +11,7 @@ func Test_NewTCPServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	ser := NewTCPServer(65535, func(conn *TCPConn) Agent {
-		a := &agent{conn: conn, log: _log, parser: &JSONParser{}}
+		a := &agent{conn: conn, log: _log, parser: &ProtoParser{}}
 		return a
 	})
 	ser.Serve(ln)
