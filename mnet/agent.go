@@ -6,20 +6,6 @@ import (
 	"net"
 )
 
-const (
-	MsgType404 = "404"
-)
-
-var _defaultMsg map[string]any
-
-func init() {
-	_defaultMsg = make(map[string]any)
-}
-
-func SetDefault404Msg(msg any) {
-	_defaultMsg[MsgType404] = msg
-}
-
 type PackParser interface {
 	Unmarshal([]byte) (msg *Msg, err error)
 	Marshal(data any) ([]byte, error)
@@ -33,16 +19,19 @@ type AgentIface interface {
 	Close()
 }
 
-type Agent struct {
-	conn   Conn
-	log    Log
-	parser PackParser
-
-	routeFlag bool
-	handler   map[string][]HandlerFunc
+type RouterIface interface {
+	Route(msg *Msg)
+	SetAgent(a AgentIface)
+	Next()
+	About()
 }
 
-type HandlerFunc func(msg Msg, a *Agent)
+type Agent struct {
+	conn    Conn
+	log     Log
+	parser  PackParser
+	handler RouterIface
+}
 
 func (a *Agent) Auth() (string, error) {
 	// TODO 获取第一个数据包进行校验
@@ -77,36 +66,16 @@ func (a *Agent) Write(msg any) {
 }
 
 func (a *Agent) Route(msg *Msg) {
-	if a.handler == nil {
-		m, o := _defaultMsg[MsgType404]
-		if o {
-			a.Write(m)
-		}
-		return
-	}
-	handles, ok := a.handler[msg.Id]
-	if !ok {
-		m, o := _defaultMsg[MsgType404]
-		if o {
-			a.Write(m)
-		}
-		return
-	}
-	a.routeFlag = true
-	for _, fc := range handles {
-		fc(*msg, a)
-		if !a.routeFlag {
-			break
-		}
-	}
+	a.handler.SetAgent(a)
+	a.handler.Route(msg)
 }
 
 func (a *Agent) Next() {
-	a.routeFlag = true
+	a.handler.Next()
 }
 
 func (a *Agent) About() {
-	a.routeFlag = false
+	a.handler.About()
 }
 
 func (a *Agent) Close() {

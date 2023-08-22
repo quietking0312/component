@@ -43,14 +43,3 @@ func (p *ProtoParser) Marshal(data any) ([]byte, error) {
 	}
 	return nil, fmt.Errorf("data type not proto.Message")
 }
-
-func (p *ProtoParser) Route(msg *Msg, a AgentIface) {
-	var req pb.Ping
-	err := proto.Unmarshal(msg.Data, &req)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	fmt.Println(msg.Id)
-	fmt.Println(string(req.GetArgs()), a.LocalAddr().String())
-}

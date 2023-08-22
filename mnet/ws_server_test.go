@@ -17,8 +17,8 @@ func Test_NewWSServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var route = make(map[string][]HandlerFunc)
-	route["hello"] = append(route["hello"], func(msg Msg, a *Agent) {
+	var route = NewRouter()
+	route.Register("hello", func(msg Msg, a AgentIface) {
 		fmt.Println(string(msg.Data))
 		a.Write(ServerMessage{
 			"go": "1.20",

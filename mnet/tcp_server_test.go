@@ -5,6 +5,9 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/quietking0312/component/mnet/pb"
 	"net"
+	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -13,8 +16,12 @@ func Test_NewTCPServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var route = make(map[string][]HandlerFunc)
-	route["0"] = append(route["0"], func(msg Msg, a *Agent) {
+	var route = NewRouter()
+	c := func(message proto.Message) string {
+		msgType := reflect.TypeOf(message)
+		return strconv.FormatInt(int64(pb.C2S_value[strings.ToLower(msgType.Elem().Name())]), 10)
+	}
+	route.Register(c(&pb.Ping{}), func(msg Msg, a AgentIface) {
 		var req pb.Ping
 		if err := proto.Unmarshal(msg.Data, &req); err != nil {
 			t.Fatal(err)
@@ -23,7 +30,7 @@ func Test_NewTCPServer(t *testing.T) {
 		a.Write(&pb.Pong{
 			Data: "go 1.20",
 		})
-	}, func(msg Msg, a *Agent) {
+	}, func(msg Msg, a AgentIface) {
 		fmt.Println("2222")
 	})
 	ser := NewTCPServer(65535, func(conn *TCPConn) AgentIface {
