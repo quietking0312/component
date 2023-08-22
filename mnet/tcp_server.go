@@ -9,14 +9,14 @@ type TCPServer struct {
 	ln         net.Listener
 	logger     Log
 	checkAuth  func()
-	NewAgent   func(conn *TCPConn) Agent
+	NewAgent   func(conn *TCPConn) AgentIface
 	conns      map[string]*TCPConn
 	maxConnNum int
 	mu         sync.Mutex
 	wg         sync.WaitGroup
 }
 
-func NewTCPServer(maxConnNum int, ag func(conn *TCPConn) Agent) *TCPServer {
+func NewTCPServer(maxConnNum int, ag func(conn *TCPConn) AgentIface) *TCPServer {
 	return &TCPServer{
 		NewAgent:   ag,
 		maxConnNum: maxConnNum,

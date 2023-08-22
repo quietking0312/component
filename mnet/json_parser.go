@@ -11,7 +11,7 @@ type JSONParser struct {
 }
 
 type Msg struct {
-	Id   []byte
+	Id   string
 	Data []byte
 }
 
@@ -24,7 +24,7 @@ func (p *JSONParser) Unmarshal(b []byte) (*Msg, error) {
 	}
 	for msgId, message := range m {
 		msg := &Msg{
-			Id:   []byte(msgId),
+			Id:   msgId,
 			Data: message,
 		}
 		return msg, nil
@@ -49,6 +49,6 @@ func (p *JSONParser) Marshal(data any) ([]byte, error) {
 	return json.Marshal(m)
 }
 
-func (p *JSONParser) Route(msg *Msg, a Agent) {
-	fmt.Println(string(msg.Id), string(msg.Data), a.LocalAddr().String())
+func (p *JSONParser) Route(msg *Msg, a AgentIface) {
+	fmt.Println(msg.Id, string(msg.Data), a.LocalAddr().String())
 }

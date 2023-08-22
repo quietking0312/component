@@ -13,17 +13,17 @@ type WSServer struct {
 	LocalIP string
 	logger  Log
 
-	NewAgent   func(*WSConn) Agent
+	NewAgent   func(*WSConn) AgentIface
 	ln         net.Listener
 	upgrader   websocket.Upgrader
 	MaxConnNum int
-	Auth       func(http.ResponseWriter, *http.Request) (string, error) // http 用户校验 为nil时调用 Agent 的用户校验
+	Auth       func(http.ResponseWriter, *http.Request) (string, error) // http 用户校验 为nil时调用 AgentIface 的用户校验
 	conns      map[string]*WSConn
 	mutexConns sync.Mutex
 	wg         sync.WaitGroup
 }
 
-func NewWSServer(maxConnNum int, ag func(conn *WSConn) Agent) *WSServer {
+func NewWSServer(maxConnNum int, ag func(conn *WSConn) AgentIface) *WSServer {
 	return &WSServer{
 		NewAgent:   ag,
 		MaxConnNum: maxConnNum,

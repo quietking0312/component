@@ -14,10 +14,8 @@ type ProtoParser struct {
 }
 
 func (p *ProtoParser) Unmarshal(b []byte) (*Msg, error) {
-	msgId := binary.LittleEndian.Uint16(b[0:2])
-
 	return &Msg{
-		Id:   []byte(strconv.FormatInt(int64(msgId), 10)),
+		Id:   strconv.Itoa(int(binary.LittleEndian.Uint16(b[0:2]))),
 		Data: b[2:],
 	}, nil
 }
@@ -46,13 +44,13 @@ func (p *ProtoParser) Marshal(data any) ([]byte, error) {
 	return nil, fmt.Errorf("data type not proto.Message")
 }
 
-func (p *ProtoParser) Route(msg *Msg, a Agent) {
+func (p *ProtoParser) Route(msg *Msg, a AgentIface) {
 	var req pb.Ping
 	err := proto.Unmarshal(msg.Data, &req)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-	fmt.Println(strconv.ParseInt(string(msg.Id), 10, 64))
+	fmt.Println(msg.Id)
 	fmt.Println(string(req.GetArgs()), a.LocalAddr().String())
 }
