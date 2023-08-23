@@ -50,6 +50,9 @@ func (t *TCPServer) Serve(ln net.Listener) {
 			conn.Close()
 			continue
 		}
+		if oldConn, ok := t.conns[tcpConn.Id]; ok {
+			oldConn.Close()
+		}
 		tcpConn.SetId(connId)
 		t.conns[connId] = tcpConn
 		t.mu.Unlock()

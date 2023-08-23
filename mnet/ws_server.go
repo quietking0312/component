@@ -53,9 +53,6 @@ func (ws *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ws.wg.Add(1)
 	defer ws.wg.Done()
 	wsConn := newWSConn("", conn, ws.logger)
-	if oldConn, ok := ws.conns[wsConn.Id]; ok {
-		oldConn.Close()
-	}
 	ag := ws.NewAgent(wsConn)
 	if connId != "" {
 		connId, err = ag.Auth()
@@ -64,6 +61,10 @@ func (ws *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	wsConn.SetId(connId)
+
+	if oldConn, ok := ws.conns[wsConn.Id]; ok {
+		oldConn.Close()
+	}
 	if len(ws.conns) >= ws.MaxConnNum {
 		wsConn.Close()
 		ws.logger.Error(fmt.Errorf("conn num:%d >= maxConn:%d", len(ws.conns), ws.MaxConnNum))

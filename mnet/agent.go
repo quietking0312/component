@@ -27,14 +27,29 @@ type RouterIface interface {
 }
 
 type Agent struct {
-	conn    Conn
-	log     Log
-	parser  PackParser
-	handler RouterIface
+	conn     Conn
+	log      Log
+	parser   PackParser
+	handler  RouterIface
+	AuthFunc AuthFunc // 第一个数据包调用该函数
 }
 
+type AuthFunc func(msg *Msg) (string, error)
+
 func (a *Agent) Auth() (string, error) {
-	// TODO 获取第一个数据包进行校验
+	if a.AuthFunc != nil {
+		_, msg, err := a.conn.Read()
+		if err != nil {
+			a.log.Error(fmt.Errorf("read message, %v", err))
+			return "", err
+		}
+		m, err := a.parser.Unmarshal(msg)
+		if err != nil {
+			a.log.Error(fmt.Errorf("unmarshal message, %v", err))
+			return "", err
+		}
+		return a.AuthFunc(m)
+	}
 	return uuid.New().String(), nil
 }
 
