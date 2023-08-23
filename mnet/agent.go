@@ -36,6 +36,20 @@ type Agent struct {
 
 type AuthFunc func(msg *Msg) (string, error)
 
+func NewAgent(conn Conn, parser PackParser, router RouterIface) *Agent {
+	return &Agent{
+		conn:    conn,
+		log:     _log,
+		parser:  parser,
+		handler: router,
+	}
+}
+
+func (a *Agent) SetLog(log Log) *Agent {
+	a.log = log
+	return a
+}
+
 func (a *Agent) Auth() (string, error) {
 	if a.AuthFunc != nil {
 		_, msg, err := a.conn.Read()
