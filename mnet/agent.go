@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"net"
+	"sync"
 )
 
 type PackParser interface {
@@ -17,6 +18,8 @@ type AgentIface interface {
 	Write(any)
 	LocalAddr() net.Addr
 	Close()
+	Get(string) (any, bool)
+	Set(key string, value any)
 }
 
 type RouterIface interface {
@@ -27,21 +30,26 @@ type RouterIface interface {
 }
 
 type Agent struct {
+	Id       string
 	conn     Conn
 	log      Log
 	parser   PackParser
 	handler  RouterIface
 	AuthFunc AuthFunc // 第一个数据包调用该函数
+	keys     map[string]any
+	mu       sync.RWMutex
 }
 
-type AuthFunc func(msg *Msg) (string, error)
+type AuthFunc func(msg *Msg, a *Agent) (string, error)
 
 func NewAgent(conn Conn, parser PackParser, router RouterIface) *Agent {
 	return &Agent{
+		Id:      "",
 		conn:    conn,
 		log:     _log,
 		parser:  parser,
 		handler: router,
+		keys:    make(map[string]any),
 	}
 }
 
@@ -62,9 +70,12 @@ func (a *Agent) Auth() (string, error) {
 			a.log.Error(fmt.Errorf("unmarshal message, %v", err))
 			return "", err
 		}
-		return a.AuthFunc(m)
+		id, err := a.AuthFunc(m, a)
+		a.Id = id
+		return id, err
 	}
-	return uuid.New().String(), nil
+	a.Id = uuid.New().String()
+	return a.Id, nil
 }
 
 func (a *Agent) Run() {
@@ -113,4 +124,26 @@ func (a *Agent) Close() {
 
 func (a *Agent) LocalAddr() net.Addr {
 	return a.conn.LocalAddr()
+}
+
+func (a *Agent) Get(key string) (value any, exists bool) {
+	a.mu.Lock()
+	defer a.mu.RUnlock()
+	value, exists = a.keys[key]
+	return
+}
+
+func (a *Agent) Set(key string, value any) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.keys == nil {
+		a.keys = make(map[string]any)
+	}
+	a.keys[key] = value
+}
+
+func (a *Agent) Del(key string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.keys, key)
 }
