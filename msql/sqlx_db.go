@@ -27,22 +27,25 @@ func NewSqlxDB(opts ...Option) (*SqlxDB, error) {
 	return _sqlxDB, nil
 }
 
-func (_sqlxDB *SqlxDB) SqlxBeginTx(cb func(tx *sqlx.Tx, ctx context.Context) error, opts ...TxOption) error {
+func (_sqlxDB *SqlxDB) SqlxBeginTx(opts TxOption, cbs ...func(tx *sqlx.Tx, ctx context.Context) error) error {
 	defaultOpt := DefaultTxOptions()
-	for _, opt := range opts {
-		opt(defaultOpt)
+	if opts != nil {
+		opts(defaultOpt)
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), _sqlxDB.DBCfg.MaxQueryTime)
 	defer cancel()
 	tx, err := _sqlxDB.SqlxDB.BeginTxx(ctx, defaultOpt)
 	if err != nil {
 		return err
 	}
-	if err := cb(tx, ctx); err != nil {
-		if err := tx.Rollback(); err != nil {
+	for _, cb := range cbs {
+		if err := cb(tx, ctx); err != nil {
+			if err := tx.Rollback(); err != nil {
+				return err
+			}
 			return err
 		}
-		return err
 	}
 	if err := tx.Commit(); err != nil {
 		if err := tx.Rollback(); err != nil {

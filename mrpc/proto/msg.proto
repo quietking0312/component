@@ -15,3 +15,18 @@ message HelloReply {
 service Service {
   rpc SayHello(HelloReq) returns (HelloReply) {}
 }
+
+
+message Data {
+  string name=1;
+  int32 age = 2;
+  int32 group= 3;
+  repeated int32 item=4;
+  repeated Prop prop=5;
+}
+
+message Prop {
+  int32 item=1;
+  int32 type=2;
+  int32 count=3;
+}
