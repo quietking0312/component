@@ -1,13 +1,13 @@
 package mjson
 
 import (
+	"bytes"
 	"encoding/json"
-	"strings"
 )
 
 // Unmarshal json 包 在解析int64 会有精度丢失问题
 func Unmarshal(data []byte, v interface{}) error {
-	dec := json.NewDecoder(strings.NewReader(string(data)))
+	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
 	return dec.Decode(v)
 }
