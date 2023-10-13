@@ -29,11 +29,20 @@ func NewWSServer(maxConnNum int, ag func(conn *WSConn) AgentIface) *WSServer {
 		MaxConnNum: maxConnNum,
 		conns:      make(map[string]*WSConn),
 		logger:     _log,
+		upgrader: websocket.Upgrader{
+			CheckOrigin: func(r *http.Request) bool {
+				return true
+			},
+		},
 	}
 }
 
 func (ws *WSServer) SetLogger(log Log) {
 	ws.logger = log
+}
+
+func (ws *WSServer) SetUpgrader(upgrader websocket.Upgrader) {
+	ws.upgrader = upgrader
 }
 
 func (ws *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -42,27 +51,31 @@ func (ws *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if ws.Auth != nil {
 		connId, err = ws.Auth(w, r)
 		if err != nil {
+			ws.logger.Error(err)
 			return
 		}
 	}
 
 	conn, err := ws.upgrader.Upgrade(w, r, nil)
 	if err != nil {
+		ws.logger.Error(err)
 		return
 	}
 	ws.wg.Add(1)
 	defer ws.wg.Done()
 	wsConn := newWSConn("", conn, ws.logger)
 	ag := ws.NewAgent(wsConn)
-	if connId != "" {
+	if connId == "" {
 		connId, err = ag.Auth()
 		if err != nil {
+			ws.logger.Error(err)
 			return
 		}
 	}
 	wsConn.SetId(connId)
+	ag.SetId(connId)
 
-	if oldConn, ok := ws.conns[wsConn.Id]; ok {
+	if oldConn, ok := ws.conns[wsConn.GetId()]; ok {
 		oldConn.Close()
 	}
 	if len(ws.conns) >= ws.MaxConnNum {
@@ -78,7 +91,7 @@ func (ws *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	wsConn.Close()
 	ws.mutexConns.Lock()
-	delete(ws.conns, wsConn.Id)
+	delete(ws.conns, wsConn.GetId())
 	ws.mutexConns.Unlock()
 	ag.Close()
 }

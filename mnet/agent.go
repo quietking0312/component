@@ -20,6 +20,8 @@ type AgentIface interface {
 	Close()
 	Get(string) (any, bool)
 	Set(key string, value any)
+	SetId(id string)
+	GetId() string
 }
 
 type RouterIface interface {
@@ -58,6 +60,11 @@ func (a *Agent) SetLog(log Log) *Agent {
 	return a
 }
 
+func (a *Agent) SetAuth(auth AuthFunc) *Agent {
+	a.AuthFunc = auth
+	return a
+}
+
 func (a *Agent) Auth() (string, error) {
 	if a.AuthFunc != nil {
 		_, msg, err := a.conn.Read()
@@ -76,6 +83,14 @@ func (a *Agent) Auth() (string, error) {
 	}
 	a.Id = uuid.New().String()
 	return a.Id, nil
+}
+
+func (a *Agent) SetId(id string) {
+	a.Id = id
+}
+
+func (a *Agent) GetId() string {
+	return a.Id
 }
 
 func (a *Agent) Run() {
@@ -127,7 +142,7 @@ func (a *Agent) LocalAddr() net.Addr {
 }
 
 func (a *Agent) Get(key string) (value any, exists bool) {
-	a.mu.Lock()
+	a.mu.RLock()
 	defer a.mu.RUnlock()
 	value, exists = a.keys[key]
 	return

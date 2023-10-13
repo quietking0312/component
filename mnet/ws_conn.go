@@ -29,6 +29,10 @@ func (ws *WSConn) SetId(id string) {
 	ws.Id = id
 }
 
+func (ws *WSConn) GetId() string {
+	return ws.Id
+}
+
 func (ws *WSConn) Close() error {
 	if ws.closeFlag {
 		return nil
