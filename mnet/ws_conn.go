@@ -7,11 +7,12 @@ import (
 )
 
 type WSConn struct {
-	Id        string
-	conn      *websocket.Conn
-	readLimit int64
-	closeFlag bool
-	log       Log
+	Id         string
+	conn       *websocket.Conn
+	readLimit  int64
+	closeFlag  bool
+	log        Log
+	remoteAddr string
 }
 
 func newWSConn(id string, conn *websocket.Conn, log Log) *WSConn {
@@ -62,4 +63,8 @@ func (ws *WSConn) Write(b []byte) (int, error) {
 
 func (ws *WSConn) LocalAddr() net.Addr {
 	return ws.conn.LocalAddr()
+}
+
+func (ws *WSConn) RemoteAddr() net.Addr {
+	return ws.conn.RemoteAddr()
 }

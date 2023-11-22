@@ -22,6 +22,7 @@ type AgentIface interface {
 	Set(key string, value any)
 	SetId(id string)
 	GetId() string
+	RemoteAddr() net.Addr
 }
 
 type RouterIface interface {
@@ -139,6 +140,10 @@ func (a *Agent) Close() {
 
 func (a *Agent) LocalAddr() net.Addr {
 	return a.conn.LocalAddr()
+}
+
+func (a *Agent) RemoteAddr() net.Addr {
+	return a.conn.RemoteAddr()
 }
 
 func (a *Agent) Get(key string) (value any, exists bool) {

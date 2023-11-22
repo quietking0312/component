@@ -1,11 +1,13 @@
 package mnet
 
 import (
+	"context"
 	"fmt"
 	"github.com/gorilla/websocket"
 	"net"
 	"net/http"
 	"sync"
+	"time"
 )
 
 type WSServer struct {
@@ -21,6 +23,7 @@ type WSServer struct {
 	conns      map[string]*WSConn
 	mutexConns sync.Mutex
 	wg         sync.WaitGroup
+	closeFlag  chan int16
 }
 
 func NewWSServer(maxConnNum int, ag func(conn *WSConn) AgentIface) *WSServer {
@@ -34,6 +37,7 @@ func NewWSServer(maxConnNum int, ag func(conn *WSConn) AgentIface) *WSServer {
 				return true
 			},
 		},
+		closeFlag: make(chan int16),
 	}
 }
 
@@ -105,7 +109,25 @@ func (ws *WSServer) Serve(ln net.Listener) {
 		Handler: ws,
 	}
 	ws.logger.Info(fmt.Sprintf("server start ip:%s addr: %s", ws.LocalIP, ws.Addr))
-	httpServer.Serve(ln)
+	go func() {
+		httpServer.Serve(ln)
+	}()
+	select {
+	case n := <-ws.closeFlag:
+		ws.logger.Info(fmt.Sprintf("ws server shutting down the server..."))
+		ctx := context.Background()
+		var cancel context.CancelFunc
+		if n > 0 {
+			ctx, cancel = context.WithTimeout(context.Background(), time.Duration(n)*time.Second)
+			defer cancel()
+		}
+		_ = httpServer.Shutdown(ctx)
+		ws.logger.Info(fmt.Sprintf("ws server has been shut down gracefully"))
+	}
+}
+
+func (ws *WSServer) Shutdown() {
+	ws.closeFlag <- 5
 }
 
 func (ws *WSServer) Close() {

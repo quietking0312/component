@@ -66,3 +66,7 @@ func (c *TCPConn) Close() error {
 func (c *TCPConn) LocalAddr() net.Addr {
 	return c.conn.LocalAddr()
 }
+
+func (c *TCPConn) RemoteAddr() net.Addr {
+	return c.conn.RemoteAddr()
+}

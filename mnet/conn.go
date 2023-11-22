@@ -7,4 +7,5 @@ type Conn interface {
 	Write(b []byte) (int, error)
 	LocalAddr() net.Addr
 	Close() error
+	RemoteAddr() net.Addr
 }
