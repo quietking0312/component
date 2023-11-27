@@ -23,36 +23,42 @@ type AgentIface interface {
 	SetId(id string)
 	GetId() string
 	RemoteAddr() net.Addr
+	Next()
+	Abort()
 }
 
 type RouterIface interface {
-	Route(msg *Msg)
-	SetAgent(a AgentIface)
+	Route(msg *Msg, a AgentIface)
 	Next()
-	About()
+	Abort()
 }
 
 type Agent struct {
-	Id       string
-	conn     Conn
-	log      Log
-	parser   PackParser
-	handler  RouterIface
-	AuthFunc AuthFunc // 第一个数据包调用该函数
-	keys     map[string]any
-	mu       sync.RWMutex
+	Id         string
+	conn       Conn
+	log        Log
+	parser     PackParser
+	AuthFunc   AuthFunc // 第一个数据包调用该函数
+	keys       map[string]any
+	routerPool sync.Pool
+	router     RouterIface
+	mu         sync.RWMutex
 }
 
 type AuthFunc func(msg *Msg, a *Agent) (string, error)
 
-func NewAgent(conn Conn, parser PackParser, router RouterIface) *Agent {
+func NewAgent(conn Conn, parser PackParser, router func() RouterIface) *Agent {
 	return &Agent{
-		Id:      "",
-		conn:    conn,
-		log:     _log,
-		parser:  parser,
-		handler: router,
-		keys:    make(map[string]any),
+		Id:     "",
+		conn:   conn,
+		log:    _log,
+		parser: parser,
+		keys:   make(map[string]any),
+		routerPool: sync.Pool{
+			New: func() any {
+				return router()
+			},
+		},
 	}
 }
 
@@ -122,16 +128,23 @@ func (a *Agent) Write(msg any) {
 }
 
 func (a *Agent) Route(msg *Msg) {
-	a.handler.SetAgent(a)
-	a.handler.Route(msg)
+	handler := a.routerPool.Get().(RouterIface)
+	a.router = handler
+	handler.Route(msg, a)
+	a.router = nil
+	a.routerPool.Put(handler)
 }
 
 func (a *Agent) Next() {
-	a.handler.Next()
+	if a.router != nil {
+		a.router.Next()
+	}
 }
 
-func (a *Agent) About() {
-	a.handler.About()
+func (a *Agent) Abort() {
+	if a.router != nil {
+		a.router.Abort()
+	}
 }
 
 func (a *Agent) Close() {
