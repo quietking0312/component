@@ -21,29 +21,29 @@ var (
 var DefaultErrorWriter io.Writer = os.Stderr
 
 func Recovery() HandlerFunc {
-	return CustomRecoveryWithWriter(DefaultErrorWriter, func(msg Msg, a AgentIface, err any) {
-		a.Abort()
+	return CustomRecoveryWithWriter(DefaultErrorWriter, func(c *Context, err any) {
+		c.Abort()
 	})
 }
 
-type RecoveryFunc func(msg Msg, a AgentIface, err any)
+type RecoveryFunc func(c *Context, err any)
 
 func CustomRecoveryWithWriter(out io.Writer, handler RecoveryFunc) HandlerFunc {
 	var logger *log.Logger
 	if out != nil {
 		logger = log.New(out, "\n\n\x1b[31m", log.LstdFlags)
 	}
-	return func(msg Msg, a AgentIface) {
+	return func(c *Context) {
 		defer func() {
 			if err := recover(); err != nil {
 				if logger != nil {
 					stack := stack(3)
 					logger.Printf("[Recovery] %s panic recovered:\n%s\n%s%s", timeFormat(time.Now()), err, stack, reset)
 				}
-				handler(msg, a, err)
+				handler(c, err)
 			}
 		}()
-		a.Next()
+		c.Next()
 	}
 }
 

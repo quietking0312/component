@@ -3,6 +3,7 @@ package mnet
 import (
 	"fmt"
 	"math"
+	"sync"
 )
 
 const (
@@ -20,21 +21,26 @@ func SetDefault404Msg(msg any) {
 	_defaultMsg[MsgType404] = msg
 }
 
-type HandlerFunc func(msg Msg, a AgentIface)
+type HandlerFunc func(c *Context)
 
 type Router struct {
-	Agent      AgentIface
-	Middleware []HandlerFunc
-	handler    map[string][]HandlerFunc
-	index      int8
-	msg        *Msg
+	Middleware  []HandlerFunc
+	handler     map[string][]HandlerFunc
+	contextPool sync.Pool
 }
 
 func NewRouter() *Router {
-	return &Router{
+	r := &Router{
 		handler: make(map[string][]HandlerFunc),
-		index:   -1,
 	}
+	r.contextPool.New = func() any {
+		return r.allocateContext()
+	}
+	return r
+}
+
+func (r *Router) allocateContext() *Context {
+	return &Context{index: -1}
 }
 
 func (r *Router) Use(fc ...HandlerFunc) {
@@ -65,30 +71,11 @@ func (r *Router) Route(msg *Msg, a AgentIface) {
 		}
 		return
 	}
-	r.Agent = a
-	r.msg = msg
-	r.Next()
-	r.reset()
-}
-
-func (r *Router) reset() {
-	r.Agent = nil
-	r.index = -1
-	r.msg = nil
-}
-
-func (r *Router) Next() {
-	r.index++
-	h, ok := r.handler[r.msg.Id]
-	if !ok {
-		return
-	}
-	for r.index < int8(len(h)) {
-		h[r.index](*r.msg, r.Agent)
-		r.index++
-	}
-}
-
-func (r *Router) Abort() {
-	r.index = abortIndex
+	c := r.contextPool.Get().(*Context)
+	c.Agent = a
+	c.Msg = msg
+	c.handler = r.handler[msg.Id]
+	c.Next()
+	c.reset()
+	r.contextPool.Put(c)
 }
