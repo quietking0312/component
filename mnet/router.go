@@ -21,26 +21,40 @@ func SetDefault404Msg(msg any) {
 	_defaultMsg[MsgType404] = msg
 }
 
-type HandlerFunc func(c *Context)
+type Context interface {
+	Reset()
+	Next()
+	Abort()
+	Write(any)
+	SetAgent(iface AgentIface)
+	GetAgent() AgentIface
+	SetHandler([]HandlerFunc)
+	SetMsg(msg *Msg)
+	GetMsg() Msg
+}
+
+type HandlerFunc func(c Context)
 
 type Router struct {
-	Middleware  []HandlerFunc
-	handler     map[string][]HandlerFunc
-	contextPool sync.Pool
+	Middleware     []HandlerFunc
+	handler        map[string][]HandlerFunc
+	DefaultContext func() Context
+	contextPool    sync.Pool
 }
 
 func NewRouter() *Router {
 	r := &Router{
 		handler: make(map[string][]HandlerFunc),
 	}
-	r.contextPool.New = func() any {
-		return r.allocateContext()
-	}
+	r.SetContext(NewMContext)
 	return r
 }
 
-func (r *Router) allocateContext() *Context {
-	return &Context{index: -1}
+func (r *Router) SetContext(c func() Context) {
+	r.DefaultContext = c
+	r.contextPool.New = func() any {
+		return r.DefaultContext()
+	}
 }
 
 func (r *Router) Use(fc ...HandlerFunc) {
@@ -71,11 +85,11 @@ func (r *Router) Route(msg *Msg, a AgentIface) {
 		}
 		return
 	}
-	c := r.contextPool.Get().(*Context)
-	c.Agent = a
-	c.Msg = msg
-	c.handler = r.handler[msg.Id]
+	c := r.contextPool.Get().(Context)
+	c.SetAgent(a)
+	c.SetMsg(msg)
+	c.SetHandler(r.handler[msg.Id])
 	c.Next()
-	c.reset()
+	c.Reset()
 	r.contextPool.Put(c)
 }

@@ -21,19 +21,19 @@ var (
 var DefaultErrorWriter io.Writer = os.Stderr
 
 func Recovery() HandlerFunc {
-	return CustomRecoveryWithWriter(DefaultErrorWriter, func(c *Context, err any) {
+	return CustomRecoveryWithWriter(DefaultErrorWriter, func(c Context, err any) {
 		c.Abort()
 	})
 }
 
-type RecoveryFunc func(c *Context, err any)
+type RecoveryFunc func(c Context, err any)
 
 func CustomRecoveryWithWriter(out io.Writer, handler RecoveryFunc) HandlerFunc {
 	var logger *log.Logger
 	if out != nil {
 		logger = log.New(out, "\n\n\x1b[31m", log.LstdFlags)
 	}
-	return func(c *Context) {
+	return func(c Context) {
 		defer func() {
 			if err := recover(); err != nil {
 				if logger != nil {

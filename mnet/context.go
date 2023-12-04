@@ -1,19 +1,44 @@
 package mnet
 
-type Context struct {
+type MContext struct {
 	Msg     *Msg
 	Agent   AgentIface
 	index   int8
 	handler []HandlerFunc
 }
 
-func (c *Context) reset() {
+func NewMContext() Context {
+	return &MContext{index: -1}
+}
+
+func (c *MContext) SetAgent(a AgentIface) {
+	c.Agent = a
+}
+
+func (c *MContext) GetAgent() AgentIface {
+	return c.Agent
+}
+
+func (c *MContext) SetMsg(msg *Msg) {
+	c.Msg = msg
+}
+
+func (c *MContext) GetMsg() Msg {
+	return *c.Msg
+}
+
+func (c *MContext) SetHandler(handler []HandlerFunc) {
+	c.handler = handler
+}
+
+func (c *MContext) Reset() {
 	c.Agent = nil
 	c.index = -1
 	c.Msg = nil
+	c.handler = nil
 }
 
-func (c *Context) Next() {
+func (c *MContext) Next() {
 	c.index++
 	for c.index < int8(len(c.handler)) {
 		c.handler[c.index](c)
@@ -21,10 +46,10 @@ func (c *Context) Next() {
 	}
 }
 
-func (c *Context) Abort() {
+func (c *MContext) Abort() {
 	c.index = abortIndex
 }
 
-func (c *Context) Write(msg any) {
+func (c *MContext) Write(msg any) {
 	c.Agent.Write(msg)
 }
