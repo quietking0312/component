@@ -19,7 +19,6 @@ func (p *JSONParser) Unmarshal(b []byte) (*Msg, error) {
 	var m map[string]json.RawMessage
 	err := json.Unmarshal(b, &m)
 	if err != nil {
-		fmt.Println(err)
 		return nil, err
 	}
 	for msgId, message := range m {

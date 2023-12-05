@@ -1,10 +1,12 @@
 package mnet
 
 import (
+	"context"
 	"fmt"
 	"github.com/google/uuid"
 	"net"
 	"sync"
+	"time"
 )
 
 type PackParser interface {
@@ -37,6 +39,8 @@ type Agent struct {
 	AuthFunc AuthFunc // 第一个数据包调用该函数
 	keys     map[string]any
 	router   RouterIface
+	timeout  time.Duration
+	readChan chan *Msg
 	mu       sync.RWMutex
 }
 
@@ -44,17 +48,27 @@ type AuthFunc func(msg *Msg, a *Agent) (string, error)
 
 func NewAgent(conn Conn, parser PackParser, router RouterIface) *Agent {
 	return &Agent{
-		Id:     "",
-		conn:   conn,
-		log:    _log,
-		parser: parser,
-		keys:   make(map[string]any),
-		router: router,
+		Id:       "",
+		conn:     conn,
+		log:      _log,
+		parser:   parser,
+		keys:     make(map[string]any),
+		router:   router,
+		readChan: make(chan *Msg),
+		timeout:  20 * time.Minute,
 	}
 }
 
 func (a *Agent) SetLog(log Log) *Agent {
 	a.log = log
+	return a
+}
+
+func (a *Agent) SetTimeout(t time.Duration) *Agent {
+	if t <= 0 {
+		return a
+	}
+	a.timeout = t
 	return a
 }
 
@@ -92,18 +106,46 @@ func (a *Agent) GetId() string {
 }
 
 func (a *Agent) Run() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	closeChan := make(chan int8)
+	go a.read(ctx, closeChan)
+	ticker := time.NewTicker(a.timeout)
+	defer ticker.Stop()
 	for {
-		_, msg, err := a.conn.Read()
-		if err != nil {
-			a.log.Error(fmt.Errorf("read message, %v", err))
-			break
+		select {
+		case <-ticker.C:
+			a.Close()
+		case msg := <-a.readChan:
+			ticker.Reset(a.timeout)
+			a.Route(msg)
+		case <-closeChan:
+			return
 		}
-		m, err := a.parser.Unmarshal(msg)
-		if err != nil {
-			a.log.Error(fmt.Errorf("unmarshal message, %v", err))
-			break
+	}
+}
+
+func (a *Agent) read(ctx context.Context, c chan int8) {
+	defer func() {
+		c <- 1
+	}()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			_, msg, err := a.conn.Read()
+			if err != nil {
+				a.log.Error(fmt.Errorf("read message, %v", err))
+				return
+			}
+			m, err := a.parser.Unmarshal(msg)
+			if err != nil {
+				a.log.Error(fmt.Errorf("unmarshal message, %v", err))
+				return
+			}
+			a.readChan <- m
 		}
-		a.Route(m)
 	}
 }
 
