@@ -39,10 +39,14 @@ func (p *JSONParser) Marshal(data any) ([]byte, error) {
 		msgId = d.GetMsgId()
 	default:
 		msgType := reflect.TypeOf(data)
-		if msgType == nil || msgType.Kind() != reflect.Ptr {
+		if msgType == nil {
 			return nil, errors.New("json message pointer required")
 		}
-		msgId = msgType.Elem().Name()
+		if msgType.Kind() == reflect.Ptr {
+			msgId = msgType.Elem().Name()
+		} else {
+			msgId = msgType.Name()
+		}
 	}
 
 	m := map[string]interface{}{msgId: data}
