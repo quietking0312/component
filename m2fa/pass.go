@@ -17,7 +17,7 @@ func m() {
 	}
 	fmt.Println("key:", key)
 
-	otp, err := totp.GenerateCode("QO2PU33DYMBC5FVP", time.Now())
+	otp, err := totp.GenerateCode("", time.Now())
 	if err != nil {
 		fmt.Println(err)
 		return
