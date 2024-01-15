@@ -66,3 +66,33 @@ func CopyStruct2(src any, dst any, opts ...Options) error {
 	}
 	return nil
 }
+
+type Opt struct {
+	Tag string
+}
+
+// GetFieldsTagValueMap 结构体转map
+func GetFieldsTagValueMap(v any, opts ...func(opt *Opt)) map[string]any {
+	opt := &Opt{
+		Tag: "json",
+	}
+	for _, o := range opts {
+		o(opt)
+	}
+
+	r := reflect.ValueOf(v)
+	if r.Kind() == reflect.Ptr {
+		r = r.Elem()
+	}
+	refType := r.Type()
+	ret := make(map[string]any)
+	for i := 0; i < r.NumField(); i++ {
+		tag := refType.Field(i).Tag.Get(opt.Tag)
+		if tag == "-" {
+			continue
+		}
+		value := r.Field(i).Interface()
+		ret[tag] = value
+	}
+	return ret
+}

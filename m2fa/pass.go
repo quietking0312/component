@@ -8,7 +8,7 @@ import (
 
 func m() {
 	key, err := totp.Generate(totp.GenerateOpts{
-		Issuer:      "myapp",
+		Issuer:      "github",
 		AccountName: "quiet_king0312@163.com",
 	})
 	if err != nil {
@@ -17,7 +17,7 @@ func m() {
 	}
 	fmt.Println("key:", key)
 
-	otp, err := totp.GenerateCode(key.Secret(), time.Now())
+	otp, err := totp.GenerateCode("QO2PU33DYMBC5FVP", time.Now())
 	if err != nil {
 		fmt.Println(err)
 		return
