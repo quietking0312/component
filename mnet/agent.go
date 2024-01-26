@@ -118,7 +118,7 @@ func (a *Agent) Run() {
 			a.Close()
 		case msg := <-a.readChan:
 			ticker.Reset(a.timeout)
-			a.Route(msg)
+			a.router.Route(msg, a)
 		case <-closeChan:
 			return
 		}
@@ -158,10 +158,6 @@ func (a *Agent) Write(msg any) {
 	if err != nil {
 		a.log.Error(fmt.Errorf("write message, %v", err))
 	}
-}
-
-func (a *Agent) Route(msg *Msg) {
-	a.router.Route(msg, a)
 }
 
 func (a *Agent) Close() {

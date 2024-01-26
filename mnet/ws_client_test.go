@@ -17,10 +17,10 @@ func Test_WSClient(t *testing.T) {
 	conn := cli.Dial()
 	wsConn := newWSConn("1", conn, _log)
 	route := NewRouter()
-	route.Register("world", func(msg Msg, a AgentIface) {
-		fmt.Println(string(msg.Data))
+	route.Register("world", func(c Context) {
+		fmt.Println(string(c.GetMsg().Data))
 	})
-	ag := Agent{conn: wsConn, log: _log, parser: &JSONParser{}, handler: route}
+	ag := NewAgent(wsConn, &JSONParser{}, route)
 	go func() {
 		ag.Run()
 	}()

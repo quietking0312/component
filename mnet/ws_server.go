@@ -59,7 +59,6 @@ func (ws *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-
 	conn, err := ws.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		ws.logger.Error(err)

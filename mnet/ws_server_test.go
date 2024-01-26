@@ -18,15 +18,14 @@ func Test_NewWSServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	var route = NewRouter()
-	route.Register("hello", func(msg Msg, a AgentIface) {
-		fmt.Println(string(msg.Data))
-		a.Write(ServerMessage{
+	route.Register("hello", func(c Context) {
+		fmt.Println(string(c.GetMsg().Data))
+		c.Write(ServerMessage{
 			"go": "1.20",
 		})
 	})
 	ser := NewWSServer(65535, func(conn *WSConn) AgentIface {
-		a := &Agent{conn: conn, log: _log, parser: &JSONParser{}, handler: route}
-		return a
+		return NewAgent(conn, &JSONParser{}, route)
 	})
 	ser.Serve(ln)
 }
