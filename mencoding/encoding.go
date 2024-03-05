@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/transform"
-	"io/ioutil"
+	"io"
 )
 
 const (
@@ -15,7 +15,7 @@ const (
 
 func Decoder(r *bufio.Reader) ([]byte, error) {
 	reader := transform.NewReader(r, simplifiedchinese.GBK.NewDecoder())
-	return ioutil.ReadAll(reader)
+	return io.ReadAll(reader)
 }
 
 func Byte2Utf8(data []byte) ([]byte, error) {

@@ -1,4 +1,4 @@
-package mtypes
+package mtool
 
 import (
 	"sync"
@@ -18,8 +18,8 @@ func NewMap(n int) *Map {
 }
 
 func (m *Map) Range(fn func(k, v any) bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	for _, k := range m.keys {
 		v, _ := m.data[k]
 		if !fn(k, v) {

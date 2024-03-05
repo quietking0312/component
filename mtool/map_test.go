@@ -1,4 +1,4 @@
-package mtypes
+package mtool
 
 import (
 	"fmt"

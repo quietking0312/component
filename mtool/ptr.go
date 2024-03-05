@@ -1,4 +1,4 @@
-package mtypes
+package mtool
 
 type T interface {
 	string | int | int64 | int32 | int16 | int8 | uint | uint16 | uint32 | uint64 | uint8 | any
