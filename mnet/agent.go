@@ -32,30 +32,32 @@ type RouterIface interface {
 }
 
 type Agent struct {
-	Id       string
-	conn     Conn
-	log      Log
-	parser   PackParser
-	AuthFunc AuthFunc // 第一个数据包调用该函数
-	keys     map[string]any
-	router   RouterIface
-	timeout  time.Duration
-	readChan chan *Msg
-	mu       sync.RWMutex
+	Id        string
+	conn      Conn
+	log       Log
+	parser    PackParser
+	AuthFunc  AuthFunc // 第一个数据包调用该函数
+	keys      map[string]any
+	router    RouterIface
+	timeout   time.Duration
+	readChan  chan *Msg
+	closeFlag bool
+	mu        sync.RWMutex
 }
 
 type AuthFunc func(msg *Msg, a *Agent) (string, error)
 
 func NewAgent(conn Conn, parser PackParser, router RouterIface) *Agent {
 	return &Agent{
-		Id:       "",
-		conn:     conn,
-		log:      _log,
-		parser:   parser,
-		keys:     make(map[string]any),
-		router:   router,
-		readChan: make(chan *Msg),
-		timeout:  20 * time.Minute,
+		Id:        "",
+		conn:      conn,
+		log:       _log,
+		parser:    parser,
+		keys:      make(map[string]any),
+		router:    router,
+		readChan:  make(chan *Msg),
+		timeout:   20 * time.Minute,
+		closeFlag: false,
 	}
 }
 
@@ -113,6 +115,9 @@ func (a *Agent) Run() {
 	ticker := time.NewTicker(a.timeout)
 	defer ticker.Stop()
 	for {
+		if a.closeFlag {
+			return
+		}
 		select {
 		case <-ticker.C:
 			a.Close()
@@ -161,7 +166,7 @@ func (a *Agent) Write(msg any) {
 }
 
 func (a *Agent) Close() {
-	a.conn.Close()
+	a.closeFlag = true
 }
 
 func (a *Agent) LocalAddr() net.Addr {

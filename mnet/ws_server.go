@@ -20,7 +20,7 @@ type WSServer struct {
 	upgrader   websocket.Upgrader
 	MaxConnNum int
 	Auth       func(http.ResponseWriter, *http.Request) (string, error) // http 用户校验 为nil时调用 AgentIface 的用户校验
-	conns      map[string]*WSConn
+	conns      map[string]AgentIface
 	mutexConns sync.Mutex
 	wg         sync.WaitGroup
 	closeFlag  chan int16
@@ -30,7 +30,7 @@ func NewWSServer(maxConnNum int, ag func(conn *WSConn) AgentIface) *WSServer {
 	return &WSServer{
 		NewAgent:   ag,
 		MaxConnNum: maxConnNum,
-		conns:      make(map[string]*WSConn),
+		conns:      make(map[string]AgentIface),
 		logger:     _log,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
@@ -78,25 +78,24 @@ func (ws *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	wsConn.SetId(connId)
 	ag.SetId(connId)
 
-	if oldConn, ok := ws.conns[wsConn.GetId()]; ok {
+	if oldConn, ok := ws.conns[ag.GetId()]; ok {
 		oldConn.Close()
 	}
 	if len(ws.conns) >= ws.MaxConnNum {
-		wsConn.Close()
+		ag.Close()
 		ws.logger.Error(fmt.Errorf("conn num:%d >= maxConn:%d", len(ws.conns), ws.MaxConnNum))
 		return
 	}
 	ws.mutexConns.Lock()
-	ws.conns[wsConn.Id] = wsConn
+	ws.conns[wsConn.Id] = ag
 	ws.mutexConns.Unlock()
 
 	ag.Run()
 
-	wsConn.Close()
-	ws.mutexConns.Lock()
-	delete(ws.conns, wsConn.GetId())
-	ws.mutexConns.Unlock()
 	ag.Close()
+	ws.mutexConns.Lock()
+	delete(ws.conns, ag.GetId())
+	ws.mutexConns.Unlock()
 }
 
 func (ws *WSServer) Serve(ln net.Listener) {
@@ -121,12 +120,27 @@ func (ws *WSServer) Serve(ln net.Listener) {
 			defer cancel()
 		}
 		_ = httpServer.Shutdown(ctx)
+		ticker := time.NewTicker(500 * time.Microsecond)
+		x := (time.Duration(n) * time.Second).Microseconds() / (time.Duration(500) * time.Microsecond).Microseconds()
+		defer ticker.Stop()
+		for {
+			if len(ws.conns) == 0 {
+				break
+			}
+			select {
+			case <-ticker.C:
+				if x <= 0 {
+					break
+				}
+				x -= 1
+			}
+		}
 		ws.logger.Info(fmt.Sprintf("ws server has been shut down gracefully"))
 	}
 }
 
 func (ws *WSServer) Shutdown() {
-	ws.closeFlag <- 5
+	ws.closeFlag <- 20
 }
 
 func (ws *WSServer) Close() {
