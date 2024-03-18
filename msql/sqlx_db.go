@@ -56,6 +56,61 @@ func (_sqlxDB *SqlxDB) SqlxBeginTx(opts TxOption, cbs ...func(tx *sqlx.Tx, ctx c
 	return err
 }
 
+type BeginContext struct {
+	tx      *sqlx.Tx
+	ctx     context.Context
+	afterFc []func()
+}
+
+func (b *BeginContext) Tx() *sqlx.Tx {
+	return b.tx
+}
+
+func (b *BeginContext) Ctx() context.Context {
+	return b.ctx
+}
+
+func (b *BeginContext) AppendAfter(fc func()) {
+	b.afterFc = append(b.afterFc, fc)
+}
+
+func (_sqlxDB *SqlxDB) SqlxBeginTx2(opts TxOption, cbs ...func(ctx *BeginContext) error) error {
+	defaultOpt := DefaultTxOptions()
+	if opts != nil {
+		opts(defaultOpt)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), _sqlxDB.DBCfg.MaxQueryTime)
+	defer cancel()
+	tx, err := _sqlxDB.SqlxDB.BeginTxx(ctx, defaultOpt)
+	if err != nil {
+		return err
+	}
+	begCtx := &BeginContext{
+		tx:      tx,
+		ctx:     ctx,
+		afterFc: make([]func(), 0),
+	}
+	for _, cb := range cbs {
+		if err := cb(begCtx); err != nil {
+			if err := tx.Rollback(); err != nil {
+				return err
+			}
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		if err := tx.Rollback(); err != nil {
+			return err
+		}
+		return err
+	}
+	for _, cb := range begCtx.afterFc {
+		cb()
+	}
+	return err
+}
+
 func (_sqlxDB *SqlxDB) SqlxNameExec(format string, arg interface{}) (sql.Result, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), _sqlxDB.DBCfg.MaxQueryTime)
 	defer cancel()
