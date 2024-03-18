@@ -91,7 +91,6 @@ func (ws *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ws.mutexConns.Unlock()
 
 	ag.Run()
-
 	ag.Close()
 	ws.mutexConns.Lock()
 	delete(ws.conns, ag.GetId())
@@ -120,27 +119,30 @@ func (ws *WSServer) Serve(ln net.Listener) {
 			defer cancel()
 		}
 		_ = httpServer.Shutdown(ctx)
-		ticker := time.NewTicker(500 * time.Microsecond)
-		x := (time.Duration(n) * time.Second).Microseconds() / (time.Duration(500) * time.Microsecond).Microseconds()
-		defer ticker.Stop()
-		for {
-			if len(ws.conns) == 0 {
-				break
-			}
-			select {
-			case <-ticker.C:
-				if x <= 0 {
-					break
-				}
-				x -= 1
-			}
-		}
-		ws.logger.Info(fmt.Sprintf("ws server has been shut down gracefully"))
+		go ws.Close()
+
 	}
 }
 
 func (ws *WSServer) Shutdown() {
 	ws.closeFlag <- 20
+	x := 500 * time.Millisecond
+	ticker := time.NewTicker(x)
+	defer ticker.Stop()
+	for {
+		if len(ws.conns) == 0 {
+			break
+		}
+		ws.logger.Info(fmt.Sprintf("%d links remaining", len(ws.conns)))
+		select {
+		case <-ticker.C:
+			if x.Seconds() > (time.Duration(20) * time.Second).Seconds() {
+				return
+			}
+			x += x
+		}
+	}
+	ws.logger.Info(fmt.Sprintf("ws server has been shut down gracefully"))
 }
 
 func (ws *WSServer) Close() {
