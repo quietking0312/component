@@ -59,7 +59,7 @@ func NewAgent(conn Conn, parser PackParser, router RouterIface) *Agent {
 		readChan:  make(chan *Msg),
 		timeout:   20 * time.Minute,
 		closeFlag: false,
-		closeChan: make(chan struct{}),
+		closeChan: make(chan struct{}, 1),
 	}
 }
 
@@ -119,7 +119,7 @@ func (a *Agent) Run() {
 	for {
 		select {
 		case <-ticker.C:
-			a.Close()
+			go a.Close()
 		case msg := <-a.readChan:
 			ticker.Reset(a.timeout)
 			a.router.Route(msg, a)
