@@ -59,35 +59,35 @@ func (r *router) find(method string, path string) (http.Handler, map[string]stri
 	pathSegs := parsePath(path)
 	params := make(map[string]string)
 
-	node := r.root
+	n := r.root
 	for i, seg := range pathSegs {
-		if node == nil {
+		if n == nil {
 			return nil, nil
 		}
 
-		if !node.isWild {
-			child := node.matchChild(seg)
+		if !n.isWild {
+			child := n.matchChild(seg)
 			if child == nil {
 				return nil, nil
 			}
-			node = child
+			n = child
 		} else {
-			if node.pattern == "*" {
+			if n.pattern == "*" {
 				break
 			}
 
-			params[node.pattern[1:]] = seg
+			params[n.pattern[1:]] = seg
 			if i == len(pathSegs)-1 {
-				handler := node.handler
+				handler := n.handler
 				return handler, params
 			}
 
-			child := node.children[0]
-			node = child
+			child := n.children[0]
+			n = child
 		}
 	}
 
-	handler := node.handler
+	handler := n.handler
 	return handler, params
 }
 

@@ -4,14 +4,18 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/golang/protobuf/proto"
-	"github.com/quietking0312/component/mnet/pb"
-	"reflect"
-	"strings"
-
 	"strconv"
 )
 
 type ProtoParser struct {
+	ValueMap map[string]int32
+	MsgName  func(data any) string
+}
+
+func NewProtoParser(valueMap map[string]int32, msgName func(data any) string) *ProtoParser {
+	return &ProtoParser{
+		valueMap, msgName,
+	}
 }
 
 func (p *ProtoParser) Unmarshal(b []byte) (*Msg, error) {
@@ -24,13 +28,10 @@ func (p *ProtoParser) Unmarshal(b []byte) (*Msg, error) {
 func (p *ProtoParser) Marshal(data any) ([]byte, error) {
 	switch data.(type) {
 	case proto.Message:
-		msgType := reflect.TypeOf(data)
-		id, ok := pb.S2C_value[strings.ToLower(msgType.Elem().Name())]
+		msgName := p.MsgName(data)
+		id, ok := p.ValueMap[p.MsgName(data)]
 		if !ok {
-			id, ok = pb.C2S_value[strings.ToLower(msgType.Elem().Name())]
-		}
-		if !ok {
-			return nil, fmt.Errorf("%s not msgid", msgType.Elem().Name())
+			return nil, fmt.Errorf("%s not msgid", msgName)
 		}
 
 		b, err := proto.Marshal(data.(proto.Message))

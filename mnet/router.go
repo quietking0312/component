@@ -3,6 +3,7 @@ package mnet
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"sync"
 )
 
@@ -67,6 +68,18 @@ func (r *Router) Register(path string, fc ...HandlerFunc) {
 		panic(fmt.Sprintf("path: %s is exists", path))
 	}
 	r.handler[path] = append(r.Middleware, fc...)
+}
+
+func (r *Router) GetMsg(p any) string {
+	pt := reflect.TypeOf(p)
+	switch pt.Kind() {
+	case reflect.Ptr:
+		return pt.Elem().Name()
+	case reflect.Struct:
+		return pt.Name()
+	default:
+		return pt.String()
+	}
 }
 
 func (r *Router) Route(msg *Msg, a AgentIface) {
