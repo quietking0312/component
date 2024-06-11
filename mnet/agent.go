@@ -124,6 +124,7 @@ func (a *Agent) Run() {
 			ticker.Reset(a.timeout)
 			a.router.Route(msg, a)
 		case <-a.closeChan:
+			a.conn.Close()
 			return
 		case <-closeChan:
 			return
