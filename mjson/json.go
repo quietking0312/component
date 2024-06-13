@@ -7,6 +7,9 @@ import (
 
 // Unmarshal json 包 在解析int64 会有精度丢失问题
 func Unmarshal(data []byte, v interface{}) error {
+	if len(data) == 0 {
+		return nil
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
 	return dec.Decode(v)
