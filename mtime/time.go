@@ -64,6 +64,21 @@ func GetWeek(opts ...func(opt *TimeOpts)) int {
 	return int(timeObj.Weekday())
 }
 
+func GetDayTime(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+}
+
+func GetWeekTime(t time.Time) time.Time {
+	weekDay := t.Weekday()
+	if weekDay > 0 {
+		weekDay -= 1
+	} else {
+		weekDay = 6
+	}
+	monday := t.AddDate(0, 0, -int(weekDay))
+	return GetDayTime(monday)
+}
+
 func TimeStampToTime(t int64) time.Time {
 
 	return time.Unix(t, 0)
