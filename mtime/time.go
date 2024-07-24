@@ -41,7 +41,8 @@ func defaultOpts() *TimeOpts {
 }
 
 func GetTime(opts ...func(opt *TimeOpts)) time.Time {
-	opt := defaultOpts()
+	opt := new(TimeOpts)
+	*opt = *_defaultOpts
 	for _, o := range opts {
 		o(opt)
 	}
@@ -53,7 +54,8 @@ func GetTime(opts ...func(opt *TimeOpts)) time.Time {
 // GetWeek 获取当前星期
 // 0, 1, 2, 3, 4, 5, 6
 func GetWeek(opts ...func(opt *TimeOpts)) int {
-	opt := defaultOpts()
+	opt := new(TimeOpts)
+	*opt = *_defaultOpts
 	for _, o := range opts {
 		o(opt)
 	}
