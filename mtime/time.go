@@ -14,14 +14,14 @@ const (
 	TimeTemplate8 = "200601"
 )
 
-var _diffTime time.Duration
+var _defaultOpts = defaultOpts()
 
-func SetDiffTime(t string) {
-	_diffTime, _ = time.ParseDuration(t)
+func SetDefaultOpt(opt *TimeOpts) {
+	_defaultOpts = opt
 }
 
-func GetDiffTime() time.Duration {
-	return _diffTime
+func GetDefaultOpts() *TimeOpts {
+	return _defaultOpts
 }
 
 type TimeOpts struct {
@@ -47,7 +47,7 @@ func GetTime(opts ...func(opt *TimeOpts)) time.Time {
 	}
 	var timeObj = time.Now()
 	timeObj = timeObj.AddDate(opt.Years, opt.Months, opt.Days).Add(opt.Duration)
-	return timeObj.Add(_diffTime)
+	return timeObj
 }
 
 // GetWeek 获取当前星期
@@ -58,7 +58,7 @@ func GetWeek(opts ...func(opt *TimeOpts)) int {
 		o(opt)
 	}
 	var timeObj = time.Now()
-	timeObj = timeObj.AddDate(opt.Years, opt.Months, opt.Days).Add(opt.Duration).Add(_diffTime)
+	timeObj = timeObj.AddDate(opt.Years, opt.Months, opt.Days).Add(opt.Duration)
 	return int(timeObj.Weekday())
 }
 
