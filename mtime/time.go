@@ -14,17 +14,29 @@ const (
 	TimeTemplate8 = "200601"
 )
 
+var _diffTime time.Duration
+
+func SetDiffTime(t string) {
+	_diffTime, _ = time.ParseDuration(t)
+}
+
+func GetDiffTime() time.Duration {
+	return _diffTime
+}
+
 type TimeOpts struct {
-	Years  int
-	Months int
-	Days   int
+	Years    int
+	Months   int
+	Days     int
+	Duration time.Duration
 }
 
 func defaultOpts() *TimeOpts {
 	return &TimeOpts{
-		Years:  0,
-		Months: 0,
-		Days:   0,
+		Years:    0,
+		Months:   0,
+		Days:     0,
+		Duration: 0,
 	}
 }
 
@@ -34,8 +46,8 @@ func GetTime(opts ...func(opt *TimeOpts)) time.Time {
 		o(opt)
 	}
 	var timeObj = time.Now()
-	timeObj = timeObj.AddDate(opt.Years, opt.Months, opt.Days)
-	return timeObj
+	timeObj = timeObj.AddDate(opt.Years, opt.Months, opt.Days).Add(opt.Duration)
+	return timeObj.Add(_diffTime)
 }
 
 // GetWeek 获取当前星期
@@ -46,19 +58,19 @@ func GetWeek(opts ...func(opt *TimeOpts)) int {
 		o(opt)
 	}
 	var timeObj = time.Now()
-	timeObj = timeObj.AddDate(opt.Years, opt.Months, opt.Days)
+	timeObj = timeObj.AddDate(opt.Years, opt.Months, opt.Days).Add(opt.Duration).Add(_diffTime)
 	return int(timeObj.Weekday())
 }
 
-func IntToString(t int64, layout string) string {
+func TimeStampToTime(t int64) time.Time {
 
-	return time.Unix(t, 0).Format(layout)
+	return time.Unix(t, 0)
 }
 
-func StringToInt(t string, layout string, location *time.Location) int64 {
+func StringToTime(t string, layout string, location *time.Location) time.Time {
 	if location == nil {
 		location = time.Local
 	}
 	stamp, _ := time.ParseInLocation(layout, t, location)
-	return stamp.Unix()
+	return stamp
 }

@@ -77,7 +77,7 @@ func newLogWriter(logCfg *LogConfig) io.Writer {
 	}
 }
 
-func newLoggerCore(logCfg *LogConfig) zapcore.Core {
+func NewLoggerCore(logCfg *LogConfig) zapcore.Core {
 	encoderConfig := zapcore.EncoderConfig{
 		TimeKey:        "time",
 		LevelKey:       "level",
@@ -109,7 +109,7 @@ func InitLog(opts ...Option) error {
 	for _, opt := range opts {
 		opt(logCfg)
 	}
-	_logger = zap.New(newLoggerCore(logCfg),
+	_logger = zap.New(NewLoggerCore(logCfg),
 		//zap.AddCaller(),
 		//zap.AddCallerSkip(1),
 		//zap.AddStacktrace(getZapLevel(logCfg.LogLevel)),
