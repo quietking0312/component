@@ -12,14 +12,14 @@ const (
 	abortIndex = math.MaxInt8 >> 1
 )
 
-var _defaultMsg map[string]any
+var _defaultMsg map[string]HandlerFunc
 
 func init() {
-	_defaultMsg = make(map[string]any)
+	_defaultMsg = make(map[string]HandlerFunc)
 }
 
-func SetDefault404Msg(msg any) {
-	_defaultMsg[MsgType404] = msg
+func SetDefault404Msg(handle HandlerFunc) {
+	_defaultMsg[MsgType404] = handle
 }
 
 type Context interface {
@@ -83,26 +83,29 @@ func (r *Router) GetMsg(p any) string {
 }
 
 func (r *Router) Route(msg *Msg, a AgentIface) {
+	c := r.contextPool.Get().(Context)
+	c.SetAgent(a)
+	c.SetMsg(msg)
+
+	defer func() {
+		c.Reset()
+		r.contextPool.Put(c)
+	}()
 	if r.handler == nil {
 		m, o := _defaultMsg[MsgType404]
 		if o {
-			a.Write(m)
+			m(c)
 		}
 		return
 	}
+	c.SetHandler(r.handler[msg.Id])
 	_, ok := r.handler[msg.Id]
 	if !ok {
 		m, o := _defaultMsg[MsgType404]
 		if o {
-			a.Write(m)
+			m(c)
 		}
 		return
 	}
-	c := r.contextPool.Get().(Context)
-	c.SetAgent(a)
-	c.SetMsg(msg)
-	c.SetHandler(r.handler[msg.Id])
 	c.Next()
-	c.Reset()
-	r.contextPool.Put(c)
 }
