@@ -5,40 +5,42 @@ import (
 )
 
 type JWT struct {
-	key    []byte
-	method jwt.SigningMethod
-	data   jwt.MapClaims
+	key []byte
+	*jwt.Token
 }
 
 func NewJWT(key []byte, method jwt.SigningMethod) *JWT {
 	return &JWT{
-		key:    key,
-		method: method,
-		data:   make(jwt.MapClaims),
+		key:   key,
+		Token: jwt.New(method),
 	}
 }
 
-func (j *JWT) SetData(data map[string]any) {
-	for k, v := range data {
-		j.data[k] = v
-	}
+func (j *JWT) SetData(data jwt.Claims) {
+	j.Token.Claims = data
 }
 
-func (j *JWT) GetData() map[string]any {
-	return j.data
+func (j *JWT) SignedString() (string, error) {
+	return j.Token.SignedString(j.key)
 }
 
-func (j *JWT) Token() (string, error) {
-	t := jwt.NewWithClaims(j.method, j.data)
-	return t.SignedString(j.key)
-}
-
-func (j *JWT) Parse(token string) (*JWT, error) {
-	_, err := jwt.ParseWithClaims(token, &j.data, func(token *jwt.Token) (interface{}, error) {
+func (j *JWT) Parse(token string, data jwt.Claims) (*JWT, error) {
+	_, err := jwt.ParseWithClaims(token, data, func(token *jwt.Token) (interface{}, error) {
 		return j.key, nil
 	})
 	if err != nil {
 		return nil, err
 	}
+	j.Claims = data
 	return j, nil
 }
+
+type JWTClaims struct {
+}
+
+func (c *JWTClaims) GetExpirationTime() (*jwt.NumericDate, error) { return nil, nil }
+func (c *JWTClaims) GetIssuedAt() (*jwt.NumericDate, error)       { return nil, nil }
+func (c *JWTClaims) GetNotBefore() (*jwt.NumericDate, error)      { return nil, nil }
+func (c *JWTClaims) GetIssuer() (string, error)                   { return "", nil }
+func (c *JWTClaims) GetSubject() (string, error)                  { return "", nil }
+func (c *JWTClaims) GetAudience() (jwt.ClaimStrings, error)       { return nil, nil }

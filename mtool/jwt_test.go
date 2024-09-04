@@ -4,8 +4,12 @@ import (
 	"fmt"
 	"github.com/golang-jwt/jwt/v5"
 	"testing"
-	"time"
 )
+
+type N struct {
+	Id int64
+	*JWTClaims
+}
 
 func TestJWT(t *testing.T) {
 	//var data = struct {
@@ -17,23 +21,24 @@ func TestJWT(t *testing.T) {
 	//		Subject: "username",
 	//	},
 	//}
-	j := NewJWT([]byte("hello"), jwt.SigningMethodHS256)
-	j.SetData(map[string]any{
-		"id":  1,
-		"iss": "server",
-		"sub": "username",
-		"exp": time.Second * 30,
+	j := NewJWT([]byte("battle"), jwt.SigningMethodHS256)
+	j.SetData(&N{
+		Id:        1,
+		JWTClaims: new(JWTClaims),
 	})
-	token, err := j.Token()
+	token, err := j.SignedString()
 	if err != nil {
 		t.Fatal(err)
 	}
 	fmt.Println(token)
 
-	j2 := NewJWT([]byte("hello"), jwt.SigningMethodHS256)
-	j2, err = j2.Parse(token)
+	j2 := NewJWT([]byte("battle"), jwt.SigningMethodHS256)
+	var tokenData = &N{
+		JWTClaims: new(JWTClaims),
+	}
+	j2, err = j2.Parse(token, tokenData)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fmt.Println(j2.GetData())
+	fmt.Println(tokenData.Id)
 }

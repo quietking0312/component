@@ -77,3 +77,42 @@ func TestCopyStruct4(t *testing.T) {
 	fmt.Println(a)
 	fmt.Println(b)
 }
+
+type E struct {
+	A int
+	B string
+}
+
+func (c *E) SetB(b string) {
+	c.B = b
+}
+
+type F struct {
+	E
+}
+
+func TestCopyStruct5(t *testing.T) {
+	f := func(r any) {
+		r = &r
+		switch r.(type) {
+		case interface{ SetB(s string) }:
+			r.(interface{ SetB(s string) }).SetB("3")
+			fmt.Println(111)
+			fmt.Println(r)
+		}
+	}
+	args := F{}
+	args.A = 1
+	args.B = "2"
+	f(args)
+	fmt.Println(args)
+}
+
+func TestC(t *testing.T) {
+	a := make(map[int32][5]int)
+	a[1] = [5]int{}
+	v := a[1]
+	v[2] = 3
+
+	fmt.Println(a)
+}
