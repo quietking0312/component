@@ -41,6 +41,7 @@ type Agent struct {
 	router    RouterIface
 	timeout   time.Duration
 	readChan  chan *Msg
+	writeChan chan []byte
 	closeFlag bool
 	closeChan chan struct{}
 	mu        sync.RWMutex
@@ -57,6 +58,7 @@ func NewAgent(conn Conn, parser PackParser, router RouterIface) *Agent {
 		keys:      make(map[string]any),
 		router:    router,
 		readChan:  make(chan *Msg),
+		writeChan: make(chan []byte, 1024),
 		timeout:   20 * time.Minute,
 		closeFlag: false,
 		closeChan: make(chan struct{}, 1),
@@ -120,6 +122,11 @@ func (a *Agent) Run() {
 		select {
 		case <-ticker.C:
 			go a.Close()
+		case data := <-a.writeChan:
+			_, err := a.conn.Write(data)
+			if err != nil {
+				a.log.Error(fmt.Errorf("write message, %v", err))
+			}
 		case msg := <-a.readChan:
 			ticker.Reset(a.timeout)
 			a.router.Route(msg, a)
@@ -161,10 +168,7 @@ func (a *Agent) Write(msg any) {
 	if err != nil {
 		a.log.Error(fmt.Errorf("parser.Marshal, %v", err))
 	}
-	_, err = a.conn.Write(data)
-	if err != nil {
-		a.log.Error(fmt.Errorf("write message, %v", err))
-	}
+	a.writeChan <- data
 }
 
 func (a *Agent) Close() {
