@@ -10,7 +10,7 @@ type TCPConn struct {
 	conn      net.Conn
 	closeFlag bool
 	log       Log
-	msgParser TCPMsgParser
+	msgParser NetMsgParser
 }
 
 func newTCPConn(id string, conn net.Conn, log Log) *TCPConn {
@@ -23,7 +23,7 @@ func newTCPConn(id string, conn net.Conn, log Log) *TCPConn {
 	return tcpConn
 }
 
-func (c *TCPConn) SetMsgParser(parser TCPMsgParser) *TCPConn {
+func (c *TCPConn) SetMsgParser(parser NetMsgParser) *TCPConn {
 	c.msgParser = parser
 	return c
 }

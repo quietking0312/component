@@ -1,5 +1,17 @@
 package mnet
 
+type Context interface {
+	Reset()
+	Next()
+	Abort()
+	Write(any)
+	SetAgent(iface AgentIface)
+	GetAgent() AgentIface
+	SetHandler([]HandlerFunc)
+	SetMsg(msg *Msg)
+	GetMsg() Msg
+}
+
 type MContext struct {
 	Msg     *Msg
 	Agent   AgentIface

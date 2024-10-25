@@ -22,18 +22,6 @@ func SetDefault404Msg(handle HandlerFunc) {
 	_defaultMsg[MsgType404] = handle
 }
 
-type Context interface {
-	Reset()
-	Next()
-	Abort()
-	Write(any)
-	SetAgent(iface AgentIface)
-	GetAgent() AgentIface
-	SetHandler([]HandlerFunc)
-	SetMsg(msg *Msg)
-	GetMsg() Msg
-}
-
 type HandlerFunc func(c Context)
 
 type Router struct {

@@ -8,19 +8,20 @@ import (
 )
 
 type ProtoParser struct {
+	msgIdLen int
 	ValueMap map[string]int32
 	MsgName  func(data any) string
 }
 
 func NewProtoParser(valueMap map[string]int32, msgName func(data any) string) *ProtoParser {
 	return &ProtoParser{
-		valueMap, msgName,
+		2, valueMap, msgName,
 	}
 }
 
 func (p *ProtoParser) Unmarshal(b []byte) (*Msg, error) {
 	return &Msg{
-		Id:   strconv.Itoa(int(binary.LittleEndian.Uint16(b[0:2]))),
+		Id:   strconv.Itoa(int(binary.LittleEndian.Uint16(b[0:p.msgIdLen]))),
 		Data: b[2:],
 	}, nil
 }
@@ -38,9 +39,9 @@ func (p *ProtoParser) Marshal(data any) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		var msgData = make([]byte, len(b)+2)
+		var msgData = make([]byte, len(b)+p.msgIdLen)
 		binary.LittleEndian.PutUint16(msgData, uint16(id))
-		copy(msgData[2:], b)
+		copy(msgData[p.msgIdLen:], b)
 		return msgData, err
 	}
 	return nil, fmt.Errorf("data type not proto.Message")

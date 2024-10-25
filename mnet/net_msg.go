@@ -7,7 +7,7 @@ import (
 	"math"
 )
 
-type TCPMsgParser interface {
+type NetMsgParser interface {
 	Read(conn io.ReadCloser) ([]byte, error)
 	Write(conn io.WriteCloser, b []byte) (int, error)
 }
