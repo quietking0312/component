@@ -7,6 +7,11 @@ import (
 	"math"
 )
 
+type TCPMsgParser interface {
+	Read(conn io.ReadCloser) ([]byte, error)
+	Write(conn io.WriteCloser, b []byte) (int, error)
+}
+
 type MsgParser struct {
 	msgLen       uint8
 	littleEndian bool

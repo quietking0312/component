@@ -2,7 +2,6 @@ package mnet
 
 import (
 	"fmt"
-	"io"
 	"net"
 )
 
@@ -12,11 +11,6 @@ type TCPConn struct {
 	closeFlag bool
 	log       Log
 	msgParser TCPMsgParser
-}
-
-type TCPMsgParser interface {
-	Read(conn io.ReadCloser) ([]byte, error)
-	Write(conn io.WriteCloser, b []byte) (int, error)
 }
 
 func newTCPConn(id string, conn net.Conn, log Log) *TCPConn {

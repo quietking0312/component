@@ -32,37 +32,40 @@ type RouterIface interface {
 }
 
 type Agent struct {
-	Id        string
-	conn      Conn
-	log       Log
-	parser    PackParser
-	AuthFunc  AuthFunc // 第一个数据包调用该函数
-	keys      map[string]any
-	router    RouterIface
-	timeout   time.Duration
-	readChan  chan *Msg
-	writeChan chan []byte
-	closeFlag bool
-	closeChan chan struct{}
-	mu        sync.RWMutex
+	Id           string
+	conn         Conn
+	log          Log
+	parser       PackParser
+	AuthFunc     AuthFunc // 第一个数据包调用该函数
+	keys         map[string]any
+	router       RouterIface
+	timeout      time.Duration
+	readChan     chan *Msg
+	writeChan    chan []byte
+	writeChanNum int
+	closeFlag    bool
+	closeChan    chan struct{}
+	mu           sync.RWMutex
 }
 
 type AuthFunc func(msg *Msg, a *Agent) (string, error)
 
 func NewAgent(conn Conn, parser PackParser, router RouterIface) *Agent {
-	return &Agent{
-		Id:        "",
-		conn:      conn,
-		log:       _log,
-		parser:    parser,
-		keys:      make(map[string]any),
-		router:    router,
-		readChan:  make(chan *Msg),
-		writeChan: make(chan []byte, 1024),
-		timeout:   20 * time.Minute,
-		closeFlag: false,
-		closeChan: make(chan struct{}, 1),
+	a := &Agent{
+		Id:           "",
+		conn:         conn,
+		log:          _log,
+		parser:       parser,
+		keys:         make(map[string]any),
+		router:       router,
+		readChan:     make(chan *Msg),
+		writeChanNum: 1024,
+		timeout:      20 * time.Minute,
+		closeFlag:    false,
+		closeChan:    make(chan struct{}, 1),
 	}
+	a.writeChan = make(chan []byte, a.writeChanNum)
+	return a
 }
 
 func (a *Agent) SetLog(log Log) *Agent {
@@ -168,7 +171,11 @@ func (a *Agent) Write(msg any) {
 	if err != nil {
 		a.log.Error(fmt.Errorf("parser.Marshal, %v", err))
 	}
-	a.writeChan <- data
+	select {
+	case a.writeChan <- data:
+	default:
+		a.Close()
+	}
 }
 
 func (a *Agent) Close() {
