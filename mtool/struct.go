@@ -3,6 +3,7 @@ package mtool
 import (
 	"errors"
 	"reflect"
+	"strings"
 )
 
 func CopyStruct(src any, dst any) error {
@@ -95,4 +96,33 @@ func GetFieldsTagValueMap(v any, opts ...func(opt *Opt)) map[string]any {
 		ret[tag] = value
 	}
 	return ret
+}
+
+func GetFilesTag(v any, opts ...func(opt *Opt)) []string {
+	opt := &Opt{
+		Tag: "json",
+	}
+	for _, o := range opts {
+		o(opt)
+	}
+	r := reflect.ValueOf(v)
+	if r.Kind() == reflect.Ptr {
+		r = r.Elem()
+	} else if r.Kind() != reflect.Struct {
+		return nil
+	}
+	refType := r.Type()
+	s := make([]string, 0)
+	for i := 0; i < r.NumField(); i++ {
+		tag := refType.Field(i).Tag.Get(opt.Tag)
+		if tag == "-" {
+			continue
+		}
+		t := strings.Split(tag, ",")[0]
+		if t != "" {
+			s = append(s, t)
+		}
+
+	}
+	return s
 }
