@@ -7,6 +7,8 @@ import (
 	"reflect"
 )
 
+var _ PackParser = (*JSONParser)(nil)
+
 type JSONParser struct {
 }
 

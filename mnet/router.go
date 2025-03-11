@@ -24,6 +24,8 @@ func SetDefault404Msg(handle HandlerFunc) {
 
 type HandlerFunc func(c Context)
 
+var _ RouterIface = (*Router)(nil)
+
 type Router struct {
 	Middleware     []HandlerFunc
 	handler        map[string][]HandlerFunc

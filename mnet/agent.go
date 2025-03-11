@@ -31,6 +31,8 @@ type RouterIface interface {
 	Route(msg *Msg, a AgentIface)
 }
 
+var _ AgentIface = (*Agent)(nil)
+
 type Agent struct {
 	Id           string
 	conn         Conn
