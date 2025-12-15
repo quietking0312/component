@@ -4,7 +4,7 @@ type Context interface {
 	Reset()
 	Next()
 	Abort()
-	Write(any)
+	Write(any) error
 	SetAgent(iface AgentIface)
 	GetAgent() AgentIface
 	SetHandler([]HandlerFunc)
@@ -62,6 +62,7 @@ func (c *MContext) Abort() {
 	c.index = abortIndex
 }
 
-func (c *MContext) Write(msg any) {
+func (c *MContext) Write(msg any) error {
 	c.Agent.Write(msg)
+	return nil
 }

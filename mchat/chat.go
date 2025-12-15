@@ -3,7 +3,7 @@ package mchat
 import (
 	"context"
 	"fmt"
-	"martial/component/mredis"
+	"github.com/quietking0312/component/mredis"
 	"time"
 )
 

@@ -1,6 +1,7 @@
 package mredis
 
 import (
+	"context"
 	"crypto/tls"
 	"github.com/redis/go-redis/v9"
 	"time"
@@ -13,6 +14,13 @@ const (
 
 type Client interface {
 	redis.Cmdable
+	Subscribe
+}
+
+type Subscribe interface {
+	SSubscribe(ctx context.Context, channels ...string) *redis.PubSub
+	PSubscribe(ctx context.Context, channels ...string) *redis.PubSub
+	Subscribe(ctx context.Context, channel ...string) *redis.PubSub
 }
 
 type Options struct {

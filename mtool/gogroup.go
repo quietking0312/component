@@ -70,3 +70,15 @@ func (g *GoGroup) Run(data TaskData, job Job) error {
 func (g *GoGroup) SetLogger(fun PanicFunc) {
 	g.panicFunc = fun
 }
+
+func DefaultPanicFunc(out any) {
+	fmt.Printf("%v\n", out)
+	for i := 1; ; i++ {
+		pc, file, line, ok := runtime.Caller(i)
+		if !ok {
+			break
+		}
+		f := runtime.FuncForPC(pc)
+		fmt.Printf("%s %s:%d(0x%x)\n", file, f.Name(), line, pc)
+	}
+}

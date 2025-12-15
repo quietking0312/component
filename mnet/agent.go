@@ -173,11 +173,7 @@ func (a *Agent) Write(msg any) {
 	if err != nil {
 		a.log.Error(fmt.Errorf("parser.Marshal, %v", err))
 	}
-	select {
-	case a.writeChan <- data:
-	default:
-		a.Close()
-	}
+	a.writeChan <- data
 }
 
 func (a *Agent) Close() {

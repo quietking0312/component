@@ -4,6 +4,14 @@ import (
 	"runtime"
 )
 
+const (
+	CapitalLetter = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	LowerLetter   = "abcdefghijklmnopqrstuvwxyz"
+	Numbers       = "0123456789"
+	Letters       = LowerLetter + CapitalLetter
+	AlphaNumeric  = Numbers + Letters
+)
+
 // 获取协程调用函数
 func runFuncName() (string, string, int) {
 	pc := make([]uintptr, 1)
@@ -46,4 +54,31 @@ func IndexOf[T comparable](list []T, i T) int {
 		}
 	}
 	return -1
+}
+
+func SliceSplit[T comparable](slice []T, n int) [][]T {
+	g := make([][]T, 0)
+	if n < 1 {
+		return g
+	}
+	sliceLen := len(slice)
+	for i := 0; i < sliceLen; i += n {
+		end := i + n
+		if end > sliceLen {
+			end = sliceLen
+		}
+		g = append(g, slice[i:end])
+	}
+	return g
+}
+
+func SliceGetKeys[T any, X any](slice []T, fc func(T) (X, bool)) []X {
+	l := make([]X, 0)
+	for _, v := range slice {
+		x, ok := fc(v)
+		if ok {
+			l = append(l, x)
+		}
+	}
+	return l
 }

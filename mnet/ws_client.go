@@ -22,11 +22,12 @@ func NewWSClient(uri string) *WSClient {
 	}
 }
 
-func (cli *WSClient) Dial() *websocket.Conn {
+func (cli *WSClient) Dial() Conn {
 	for {
 		conn, _, err := cli.dialer.Dial(cli.url, cli.header)
 		if err == nil || cli.closeFlag {
-			return conn
+			wsConn := newWSConn("", conn, cli.logger)
+			return wsConn
 		}
 
 		time.Sleep(5 * time.Second)
