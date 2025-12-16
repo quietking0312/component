@@ -63,9 +63,47 @@ func (m *OrderedMap[K, V]) Delete(k K) {
 }
 
 func (m *OrderedMap[K, V]) Keys() []K {
-	return m.keys
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	keys := make([]K, len(m.keys))
+	copy(keys, m.keys)
+	return keys
+}
+
+func (m *OrderedMap[K, V]) Values() []V {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	values := make([]V, len(m.keys))
+	for i, k := range m.keys {
+		values[i] = m.data[k]
+	}
+	return values
 }
 
 func (m *OrderedMap[K, V]) Length() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return len(m.keys)
+}
+
+func (m *OrderedMap[K, V]) Iter() <-chan struct {
+	Key   K
+	Value V
+} {
+	ch := make(chan struct {
+		Key   K
+		Value V
+	})
+	go func() {
+		m.mu.RLock()
+		defer m.mu.RUnlock()
+		defer close(ch)
+		for _, k := range m.keys {
+			ch <- struct {
+				Key   K
+				Value V
+			}{Key: k, Value: m.data[k]}
+		}
+	}()
+	return ch
 }

@@ -3,38 +3,61 @@ package mtool
 import (
 	"fmt"
 	"math/rand"
+	"time"
 )
 
-type SkipListNode struct {
-	next  []*SkipListNode // 每一层的下一跳指针
-	key   int64
-	value any
+/*
+跳表
+
+*/
+
+const (
+	Less    = -1
+	Equal   = 0
+	Greater = 1
+)
+
+type SkipListNode[K comparable, V any] struct {
+	next  []*SkipListNode[K, V] // 每一层的下一跳指针
+	key   K
+	value V
 }
 
-func newNode(key int64, val any, lv int) *SkipListNode {
-	return &SkipListNode{next: make([]*SkipListNode, lv), key: key, value: val}
+func newNode[K comparable, V any](key K, val V, lv int) *SkipListNode[K, V] {
+	return &SkipListNode[K, V]{next: make([]*SkipListNode[K, V], lv), key: key, value: val}
 }
 
-type SkipList struct {
-	head     *SkipListNode // 头节点
-	level    int           // 当前最高层数
-	maxLevel int           // 最大层数
-	p        float64       // 随机提升概率 1 百分百提升
+type SkipList[K comparable, V any] struct {
+	head     *SkipListNode[K, V] // 头节点
+	level    int                 // 当前最高层数
+	maxLevel int                 // 最大层数
+	p        float64             // 随机提升概率 1 百分百提升
+	compare  func(a, b K) int
+	rand     *rand.Rand
 }
 
-func NewSkipList() *SkipList {
-	return &SkipList{level: 1, maxLevel: 8, p: 0.5, head: newNode(0, nil, 8)}
+func NewSkipList[K comparable, V any](compare func(a, b K) int) *SkipList[K, V] {
+	return &SkipList[K, V]{
+		level:    1,
+		maxLevel: 8,
+		p:        0.5,
+		head:     &SkipListNode[K, V]{next: make([]*SkipListNode[K, V], 8)},
+		compare:  compare,
+		rand:     rand.New(rand.NewSource(time.Now().UnixNano())),
+	}
 }
 
-func (skipList *SkipList) Insert(key int64, value any) {
-	update := make(map[int]*SkipListNode)
+func (skipList *SkipList[K, V]) Insert(key K, value V) {
+	update := make(map[int]*SkipListNode[K, V])
 	curr := skipList.head
 
 	for i := skipList.level - 1; i >= 0; i-- {
-		for curr.next[i] != nil && curr.next[i].key < key {
+
+		for curr.next[i] != nil && skipList.compare(curr.next[i].key, key) == Less {
 			curr = curr.next[i]
 		}
 		update[i] = curr
+
 	}
 
 	level := skipList.RandomLevel()
@@ -53,17 +76,17 @@ func (skipList *SkipList) Insert(key int64, value any) {
 	}
 }
 
-func (skipList *SkipList) RandomLevel() int {
+func (skipList *SkipList[K, V]) RandomLevel() int {
 	var level int = 1
-	for rand.Float64() < skipList.p && level < skipList.maxLevel {
+	for skipList.rand.Float64() < skipList.p && level < skipList.maxLevel {
 		level++
 	}
 	return level
 }
 
-func (skipList *SkipList) Remove(key int64) {
+func (skipList *SkipList[K, V]) Remove(key K) {
 
-	update := make(map[int]*SkipListNode)
+	update := make(map[int]*SkipListNode[K, V])
 	curr := skipList.head
 	for i := skipList.level - 1; i >= 0; i-- {
 		for {
@@ -74,7 +97,7 @@ func (skipList *SkipList) Remove(key int64) {
 				update[i] = curr
 				break
 			}
-			if curr.next[i].key < key {
+			if skipList.compare(curr.next[i].key, key) == Less {
 				curr = curr.next[i]
 				continue
 			} else {
@@ -91,7 +114,7 @@ func (skipList *SkipList) Remove(key int64) {
 	}
 }
 
-func (skipList *SkipList) Search(key int64) (any, bool) {
+func (skipList *SkipList[K, V]) Search(key K) (any, bool) {
 	node := skipList.head
 	for i := skipList.level - 1; i >= 0; i-- {
 		for {
@@ -99,11 +122,11 @@ func (skipList *SkipList) Search(key int64) (any, bool) {
 				break
 			}
 
-			if node.next[i].key == key {
+			if skipList.compare(node.next[i].key, key) == Equal {
 				return node.next[i].value, true
 			}
 
-			if node.next[i].key < key {
+			if skipList.compare(node.next[i].key, key) == Less {
 				node = node.next[i]
 				continue
 			} else {
@@ -114,7 +137,7 @@ func (skipList *SkipList) Search(key int64) (any, bool) {
 	return nil, false
 }
 
-func (skipList *SkipList) PrintSkipList() {
+func (skipList *SkipList[K, V]) PrintSkipList() {
 
 	for i := skipList.maxLevel - 1; i >= 0; i-- {
 
@@ -122,7 +145,7 @@ func (skipList *SkipList) PrintSkipList() {
 		node := skipList.head.next[i]
 		for {
 			if node != nil {
-				fmt.Printf("%d:%v %p ", node.key, node.value, node)
+				fmt.Printf("%v:%v %p ", node.key, node.value, node)
 				node = node.next[i]
 			} else {
 				break
