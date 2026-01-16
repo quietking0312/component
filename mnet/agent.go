@@ -20,9 +20,14 @@ type AgentIface interface {
 	Write(any)
 	LocalAddr() net.Addr
 	Close()
+	Closed() bool
 	Get(string) (any, bool)
 	Set(key string, value any)
 	SetId(id string)
+	SetLog(log Log) AgentIface
+	SetAuth(auth AuthFunc) AgentIface
+	SetTimeout(t time.Duration) AgentIface
+	SetCloseCallback(fc func()) AgentIface
 	GetId() string
 	RemoteAddr() net.Addr
 }
@@ -31,51 +36,51 @@ type RouterIface interface {
 	Route(msg *Msg, a AgentIface)
 }
 
-var _ AgentIface = (*Agent)(nil)
-
 type Agent struct {
-	Id           string
-	conn         Conn
-	log          Log
-	parser       PackParser
-	AuthFunc     AuthFunc // 第一个数据包调用该函数
-	keys         map[string]any
-	router       RouterIface
-	timeout      time.Duration
-	readChan     chan *Msg
-	writeChan    chan []byte
-	writeChanNum int
-	closeFlag    bool
-	closeChan    chan struct{}
-	mu           sync.RWMutex
+	Id            string
+	conn          Conn
+	log           Log
+	parser        PackParser
+	AuthFunc      AuthFunc // 第一个数据包调用该函数
+	keys          map[string]any
+	router        RouterIface
+	timeout       time.Duration
+	readChan      chan *Msg
+	writeChan     chan []byte
+	closeFlag     bool
+	closeChan     chan struct{}
+	closeCallback func() // 链接 关闭 回调
+	mu            sync.RWMutex
 }
 
 type AuthFunc func(msg *Msg, a *Agent) (string, error)
 
+// NewAgent
+// conn 链接
+// parser 包解析
+// router 路由
 func NewAgent(conn Conn, parser PackParser, router RouterIface) *Agent {
-	a := &Agent{
-		Id:           "",
-		conn:         conn,
-		log:          _log,
-		parser:       parser,
-		keys:         make(map[string]any),
-		router:       router,
-		readChan:     make(chan *Msg),
-		writeChanNum: 1024,
-		timeout:      20 * time.Minute,
-		closeFlag:    false,
-		closeChan:    make(chan struct{}, 1),
+	return &Agent{
+		Id:        "",
+		conn:      conn,
+		log:       _log,
+		parser:    parser,
+		keys:      make(map[string]any),
+		router:    router,
+		readChan:  make(chan *Msg),
+		writeChan: make(chan []byte, 1024),
+		timeout:   20 * time.Minute,
+		closeFlag: false,
+		closeChan: make(chan struct{}, 1),
 	}
-	a.writeChan = make(chan []byte, a.writeChanNum)
-	return a
 }
 
-func (a *Agent) SetLog(log Log) *Agent {
+func (a *Agent) SetLog(log Log) AgentIface {
 	a.log = log
 	return a
 }
 
-func (a *Agent) SetTimeout(t time.Duration) *Agent {
+func (a *Agent) SetTimeout(t time.Duration) AgentIface {
 	if t <= 0 {
 		return a
 	}
@@ -83,8 +88,13 @@ func (a *Agent) SetTimeout(t time.Duration) *Agent {
 	return a
 }
 
-func (a *Agent) SetAuth(auth AuthFunc) *Agent {
+func (a *Agent) SetAuth(auth AuthFunc) AgentIface {
 	a.AuthFunc = auth
+	return a
+}
+
+func (a *Agent) SetCloseCallback(fc func()) AgentIface {
+	a.closeCallback = fc
 	return a
 }
 
@@ -119,26 +129,28 @@ func (a *Agent) GetId() string {
 func (a *Agent) Run() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	closeChan := make(chan int8)
-	go a.read(ctx, closeChan)
+	readCloseChan := make(chan int8)
+	go a.read(ctx, readCloseChan)
 	ticker := time.NewTicker(a.timeout)
 	defer ticker.Stop()
 	for {
 		select {
-		case <-ticker.C:
+		case <-ticker.C: // 超时
 			go a.Close()
-		case data := <-a.writeChan:
+		case data := <-a.writeChan: // 往真实链接写入数据
 			_, err := a.conn.Write(data)
 			if err != nil {
 				a.log.Error(fmt.Errorf("write message, %v", err))
+				go a.Close()
 			}
 		case msg := <-a.readChan:
 			ticker.Reset(a.timeout)
 			a.router.Route(msg, a)
-		case <-a.closeChan:
+		case <-a.closeChan: //
 			a.conn.Close()
 			return
-		case <-closeChan:
+		case <-readCloseChan: // 读取协程 关闭
+			go a.Close()
 			return
 		}
 	}
@@ -181,6 +193,10 @@ func (a *Agent) Close() {
 		a.closeFlag = true
 		a.closeChan <- struct{}{}
 	}
+}
+
+func (a *Agent) Closed() bool {
+	return a.closeFlag
 }
 
 func (a *Agent) LocalAddr() net.Addr {

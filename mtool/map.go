@@ -10,6 +10,11 @@ type OrderedMap[K comparable, V any] struct {
 	mu   sync.RWMutex
 }
 
+type OrderedMapSnapshot[K comparable, V any] struct {
+	Data map[K]V
+	Keys []K
+}
+
 func NewOrderedMap[K comparable, V any]() *OrderedMap[K, V] {
 	return &OrderedMap[K, V]{
 		data: make(map[K]V),
@@ -17,28 +22,79 @@ func NewOrderedMap[K comparable, V any]() *OrderedMap[K, V] {
 	}
 }
 
+func (m *OrderedMap[K, V]) Snapshot() *OrderedMapSnapshot[K, V] {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	data := make(map[K]V, len(m.data))
+	for k, v := range m.data {
+		data[k] = v
+	}
+	keys := make([]K, len(m.keys))
+	copy(keys, m.keys)
+	return &OrderedMapSnapshot[K, V]{
+		Data: data,
+		Keys: keys,
+	}
+}
+
+func (m *OrderedMap[K, V]) Values() []V {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	data := make([]V, 0, len(m.data))
+	keysCopy := make([]K, len(m.keys))
+	copy(keysCopy, m.keys)
+	for _, k := range keysCopy {
+		v, ok := m.data[k]
+		if ok {
+			data = append(data, v)
+		}
+	}
+	return data
+}
+
+func (m *OrderedMap[K, V]) Clear() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	clear(m.data)
+	m.keys = make([]K, 0)
+}
+
 func (m *OrderedMap[K, V]) Range(fn func(k K, v V) bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	for _, k := range m.keys {
-		v, _ := m.data[k]
+	keys := make([]K, len(m.keys))
+	copy(keys, m.keys)
+	for _, k := range keys {
+		v, ok := m.data[k]
+		if !ok {
+			continue
+		}
 		if !fn(k, v) {
 			break
 		}
 	}
 }
 
+func (m *OrderedMap[K, V]) Update(fn func(dataCopy map[K]V, keysCopy []K) (map[K]V, []K)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	dataCopy := make(map[K]V, len(m.data))
+	for k, v := range m.data {
+		dataCopy[k] = v
+	}
+	keysCopy := make([]K, len(m.keys))
+	copy(keysCopy, m.keys)
+	newData, newKeys := fn(dataCopy, keysCopy)
+	m.data = newData
+	m.keys = newKeys
+}
+
 func (m *OrderedMap[K, V]) Set(k K, v V) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var newKeys []K
-	for _, key := range m.keys {
-		if key != k {
-			newKeys = append(newKeys, key)
-		}
+	if _, exists := m.data[k]; !exists {
+		m.keys = append(m.keys, k)
 	}
-	m.keys = newKeys
-	m.keys = append(m.keys, k)
 	m.data[k] = v
 }
 
@@ -52,6 +108,9 @@ func (m *OrderedMap[K, V]) Get(k K) (v V, ok bool) {
 func (m *OrderedMap[K, V]) Delete(k K) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, ok := m.data[k]; !ok {
+		return
+	}
 	var newKeys []K
 	for _, key := range m.keys {
 		if key != k {
@@ -62,48 +121,34 @@ func (m *OrderedMap[K, V]) Delete(k K) {
 	delete(m.data, k)
 }
 
+func (m *OrderedMap[K, V]) Deletes(k []K) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var newKeys []K
+	deleteSet := make(map[K]bool, len(k))
+	for _, a := range k {
+		deleteSet[a] = true
+	}
+	for _, key := range m.keys {
+		if !deleteSet[key] {
+			newKeys = append(newKeys, key)
+		} else {
+			delete(m.data, key)
+		}
+	}
+	m.keys = newKeys
+}
+
 func (m *OrderedMap[K, V]) Keys() []K {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	keys := make([]K, len(m.keys))
 	copy(keys, m.keys)
-	return keys
-}
-
-func (m *OrderedMap[K, V]) Values() []V {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	values := make([]V, len(m.keys))
-	for i, k := range m.keys {
-		values[i] = m.data[k]
-	}
-	return values
+	return m.keys
 }
 
 func (m *OrderedMap[K, V]) Length() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.keys)
-}
-
-func (m *OrderedMap[K, V]) Iter() <-chan struct {
-	Key   K
-	Value V
-} {
-	ch := make(chan struct {
-		Key   K
-		Value V
-	})
-	go func() {
-		m.mu.RLock()
-		defer m.mu.RUnlock()
-		defer close(ch)
-		for _, k := range m.keys {
-			ch <- struct {
-				Key   K
-				Value V
-			}{Key: k, Value: m.data[k]}
-		}
-	}()
-	return ch
 }

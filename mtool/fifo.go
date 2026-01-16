@@ -1,7 +1,6 @@
 package mtool
 
 import (
-	"fmt"
 	"sync"
 )
 
@@ -30,7 +29,6 @@ func (f *FIFO[T]) Push(value T) {
 	defer f.mu.Unlock()
 
 	f.tail = (f.tail + 1) % f.size
-	fmt.Println(f.tail)
 	f.data[f.tail] = value
 
 	if f.count < f.size {

@@ -135,7 +135,7 @@ func (ws *WSServer) Shutdown() {
 		}
 		ws.logger.Info(fmt.Sprintf("%d links remaining", len(ws.conns)))
 		select {
-		case <-ticker.C:
+		case <-ticker.C: // 每500毫秒检测一次, 直到链接全部关闭 或者超时
 			if x.Seconds() > (time.Duration(20) * time.Second).Seconds() {
 				return
 			}
