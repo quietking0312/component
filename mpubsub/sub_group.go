@@ -8,19 +8,20 @@ import (
 	"time"
 )
 
-type WriteSnapshot[K comparable, T any] struct {
-	Key   K
+type WriteSnapshot[T any] struct {
+	Key   string
 	Write WriteIface[T]
 }
 
 type WriteIface[T any] interface {
 	Write(T) error
 	Close() error
+	ID() string
 }
 
 // 订阅组
 
-type SubGroup[K comparable, T any] struct {
+type SubGroup[T any] struct {
 	id        string
 	group     sync.Map // K => WriteIface[T]
 	msgChan   chan T
@@ -32,17 +33,17 @@ type SubGroup[K comparable, T any] struct {
 	cancel    context.CancelFunc
 }
 
-type ChannelOption[K comparable, T any] func(group *SubGroup[K, T])
+type ChannelOption[T any] func(group *SubGroup[T])
 
-func withChannelLogger[K comparable, T any](logger LoggerIface) ChannelOption[K, T] {
-	return func(g *SubGroup[K, T]) {
+func withChannelLogger[T any](logger LoggerIface) ChannelOption[T] {
+	return func(g *SubGroup[T]) {
 		g.logger = logger
 	}
 }
 
-func NewSubChannel[K comparable, T any](id string, opts ...ChannelOption[K, T]) *SubGroup[K, T] {
+func NewSubGroup[T any](id string, opts ...ChannelOption[T]) *SubGroup[T] {
 	ctx, cancel := context.WithCancel(context.Background())
-	ch := &SubGroup[K, T]{
+	ch := &SubGroup[T]{
 		id:      id,
 		msgChan: make(chan T, 100),
 		logger:  _log,
@@ -55,19 +56,19 @@ func NewSubChannel[K comparable, T any](id string, opts ...ChannelOption[K, T]) 
 	ch.start()
 	return ch
 }
-func (c *SubGroup[K, T]) Register(key K, writer WriteIface[T]) error {
-	if _, exists := c.group.Load(key); exists {
+func (c *SubGroup[T]) Register(writer WriteIface[T]) error {
+	if _, exists := c.group.Load(writer.ID()); exists {
 		return nil
 	}
-	c.group.Store(key, writer)
+	c.group.Store(writer.ID(), writer)
 	return nil
 }
 
-func (c *SubGroup[K, T]) ID() string {
+func (c *SubGroup[T]) ID() string {
 	return c.id
 }
 
-func (c *SubGroup[K, T]) Unregister(key K) error {
+func (c *SubGroup[T]) Unregister(key string) error {
 	if writer, exists := c.group.LoadAndDelete(key); exists {
 		// 关闭写入器
 		go func() {
@@ -80,7 +81,7 @@ func (c *SubGroup[K, T]) Unregister(key K) error {
 	return nil
 }
 
-func (c *SubGroup[K, T]) start() {
+func (c *SubGroup[T]) start() {
 	for i := 0; i < 10; i++ {
 		c.wg.Add(1)
 		go c.worker(i)
@@ -89,7 +90,7 @@ func (c *SubGroup[K, T]) start() {
 	go c.cleanupWorker()
 }
 
-func (c *SubGroup[K, T]) Write(m T) error {
+func (c *SubGroup[T]) Write(m T) error {
 	if c.closed.Load() {
 		return fmt.Errorf("groupClosed: %v", c.id)
 	}
@@ -106,7 +107,7 @@ func (c *SubGroup[K, T]) Write(m T) error {
 	}
 }
 
-func (c *SubGroup[K, T]) worker(id int) {
+func (c *SubGroup[T]) worker(id int) {
 	defer c.wg.Done()
 	for {
 		select {
@@ -121,10 +122,10 @@ func (c *SubGroup[K, T]) worker(id int) {
 	}
 }
 
-func (c *SubGroup[K, T]) distributeMessage(msg T, workerId int) {
-	var subscribers []WriteSnapshot[K, T]
+func (c *SubGroup[T]) distributeMessage(msg T, workerId int) {
+	var subscribers []WriteSnapshot[T]
 	c.group.Range(func(key, value any) bool {
-		subscribers = append(subscribers, WriteSnapshot[K, T]{Key: key.(K), Write: value.(WriteIface[T])})
+		subscribers = append(subscribers, WriteSnapshot[T]{Key: key.(string), Write: value.(WriteIface[T])})
 		return true
 	})
 	if len(subscribers) == 0 {
@@ -137,7 +138,7 @@ func (c *SubGroup[K, T]) distributeMessage(msg T, workerId int) {
 		var wg sync.WaitGroup
 		for _, sub := range subscribers {
 			wg.Add(1)
-			go func(s WriteSnapshot[K, T]) {
+			go func(s WriteSnapshot[T]) {
 				defer wg.Done()
 				c.writeToSubscriber(s.Key, s.Write, msg)
 			}(sub)
@@ -147,8 +148,8 @@ func (c *SubGroup[K, T]) distributeMessage(msg T, workerId int) {
 	}
 }
 
-func (c *SubGroup[K, T]) batchDistribute(
-	subscribers []WriteSnapshot[K, T], msg T) {
+func (c *SubGroup[T]) batchDistribute(
+	subscribers []WriteSnapshot[T], msg T) {
 	batchSize := 10
 	for i := 0; i < len(subscribers); i += batchSize {
 		end := i + batchSize
@@ -159,7 +160,7 @@ func (c *SubGroup[K, T]) batchDistribute(
 		var wg sync.WaitGroup
 		for _, sub := range batch {
 			wg.Add(1)
-			go func(s WriteSnapshot[K, T]) {
+			go func(s WriteSnapshot[T]) {
 				defer wg.Done()
 				c.writeToSubscriber(s.Key, s.Write, msg)
 			}(sub)
@@ -170,7 +171,7 @@ func (c *SubGroup[K, T]) batchDistribute(
 }
 
 // 写入单个订阅者
-func (c *SubGroup[K, T]) writeToSubscriber(key K, writer WriteIface[T], msg T) {
+func (c *SubGroup[T]) writeToSubscriber(key string, writer WriteIface[T], msg T) {
 	var lastErr error
 	for i := 0; i < 10; i++ {
 		if i > 1 {
@@ -186,7 +187,7 @@ func (c *SubGroup[K, T]) writeToSubscriber(key K, writer WriteIface[T], msg T) {
 	c.group.Delete(key)
 }
 
-func (c *SubGroup[K, T]) cleanupWorker() {
+func (c *SubGroup[T]) cleanupWorker() {
 	defer c.wg.Done()
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
@@ -199,7 +200,7 @@ func (c *SubGroup[K, T]) cleanupWorker() {
 	}
 }
 
-func (c *SubGroup[K, T]) Close() error {
+func (c *SubGroup[T]) Close() error {
 	if !c.closed.CompareAndSwap(false, true) {
 		return nil
 	}

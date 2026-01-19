@@ -12,6 +12,8 @@ import (
 
 type SubGroupIface[T any] interface {
 	Write(T) error
+	Register(writer WriteIface[T]) error
+	Unregister(key string) error
 }
 
 type Message[T any] struct {
@@ -223,4 +225,19 @@ func (m *MPubSub[T]) publishWithRetry(ctx context.Context, channel string, data 
 		return nil
 	}
 	return lastErr
+}
+
+// 判断监听组是否存在
+func (m *MPubSub[T]) ExistsSubGroup(groupId string) bool {
+	if _, exists := m.subGroup.Load(groupId); exists {
+		return true
+	}
+	return false
+}
+
+func (m *MPubSub[T]) GetSubGroup(groupId string) (SubGroupIface[T], bool) {
+	if v, exists := m.subGroup.Load(groupId); exists {
+		return v.(SubGroupIface[T]), true
+	}
+	return nil, false
 }

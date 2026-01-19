@@ -56,8 +56,8 @@ func TestNewMPubSub(t *testing.T) {
 	pubFunc := func(ctx context.Context, key string, m []byte) error {
 		return rdb.Publish(ctx, key, m).Err()
 	}
-	subChannel := NewSubChannel[string, any]("1")
-	subChannel.Register("100", NewContext[any]("100"))
+	subChannel := NewSubGroup[any]("1")
+	subChannel.Register(NewContext[any]("100"))
 	sub, err := NewMPubSub[any]([]string{"test_01"}, subFunc, pubFunc)
 	if err != nil {
 		t.Fatal(err)
@@ -71,10 +71,10 @@ func TestNewMPubSub(t *testing.T) {
 		})
 		time.Sleep(time.Second)
 		if i > 50 {
-			subChannel.Register("101", NewContext[any]("101"))
+			subChannel.Register(NewContext[any]("101"))
 		}
 		if i > 100 {
-			subChannel.Register("102", NewContext[any]("102"))
+			subChannel.Register(NewContext[any]("102"))
 		}
 	}
 	time.Sleep(5 * time.Minute)
