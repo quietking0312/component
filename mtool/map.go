@@ -4,6 +4,11 @@ import (
 	"sync"
 )
 
+// 有序的 map
+// 并发安全
+// 因为使用了读写锁，在读取时候不如 sync.map
+// 使用了泛型，类型更加安全，内存效率 比sync.map 好
+
 type OrderedMap[K comparable, V any] struct {
 	data map[K]V
 	keys []K
@@ -57,22 +62,6 @@ func (m *OrderedMap[K, V]) Clear() {
 	defer m.mu.Unlock()
 	clear(m.data)
 	m.keys = make([]K, 0)
-}
-
-func (m *OrderedMap[K, V]) Range(fn func(k K, v V) bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	keys := make([]K, len(m.keys))
-	copy(keys, m.keys)
-	for _, k := range keys {
-		v, ok := m.data[k]
-		if !ok {
-			continue
-		}
-		if !fn(k, v) {
-			break
-		}
-	}
 }
 
 func (m *OrderedMap[K, V]) Update(fn func(dataCopy map[K]V, keysCopy []K) (map[K]V, []K)) {

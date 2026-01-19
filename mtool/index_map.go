@@ -2,6 +2,10 @@ package mtool
 
 import "sync"
 
+// 使用了 数组+索引结构的map
+// 适合 V 为 struct 的类型，内存对齐， 占用内存更小
+//
+
 type IndexMap[K comparable, V any] struct {
 	data   []V
 	index  map[K]int
@@ -42,7 +46,8 @@ func (m *IndexMap[K, V]) Get(key K) (V, bool) {
 	if idx, ok := m.index[key]; ok && idx >= 0 && idx < len(m.data) {
 		return m.data[idx], true
 	}
-	return *new(V), false
+	var zero V
+	return zero, false
 }
 
 func (m *IndexMap[K, V]) GetByIndex(idx int) (V, bool) {
@@ -52,7 +57,8 @@ func (m *IndexMap[K, V]) GetByIndex(idx int) (V, bool) {
 	if idx >= 0 && idx < len(m.data) {
 		return m.data[idx], true
 	}
-	return *new(V), false
+	var zero V
+	return zero, false
 }
 
 func (m *IndexMap[K, V]) Delete(key K) bool {
@@ -151,27 +157,6 @@ func (m *IndexMap[K, V]) IndexOf(key K) (int, bool) {
 	defer m.mu.RUnlock()
 	idx, exists := m.index[key]
 	return idx, exists
-}
-
-// Range 遍历所有元素
-func (m *IndexMap[K, V]) Range(f func(key K, value V) bool) {
-	m.mu.RLock()
-	// 复制数据避免长时间持有锁
-	data := make([]V, len(m.data))
-	copy(data, m.data)
-	index := make(map[K]int, len(m.index))
-	for k, v := range m.index {
-		index[k] = v
-	}
-	m.mu.RUnlock()
-
-	for key, idx := range index {
-		if idx >= 0 && idx < len(data) {
-			if !f(key, data[idx]) {
-				break
-			}
-		}
-	}
 }
 
 func (m *IndexMap[K, V]) Clear() {
