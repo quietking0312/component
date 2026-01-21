@@ -58,7 +58,7 @@ func NewSubGroup[T any](id string, opts ...ChannelOption[T]) *SubGroup[T] {
 }
 func (c *SubGroup[T]) Register(writer WriteIface[T]) error {
 	if _, exists := c.group.Load(writer.ID()); exists {
-		return nil
+		c.group.Delete(writer.ID())
 	}
 	c.group.Store(writer.ID(), writer)
 	return nil
@@ -168,6 +168,15 @@ func (c *SubGroup[T]) batchDistribute(
 		wg.Wait()
 	}
 
+}
+
+func (c *SubGroup[T]) WriteToSubscriber(key string, msg T) {
+	w, ok := c.group.Load(key)
+	if !ok {
+		return
+	}
+	writer := w.(WriteIface[T])
+	c.writeToSubscriber(key, writer, msg)
 }
 
 // 写入单个订阅者
