@@ -21,16 +21,16 @@ func runFuncName() (string, string, int) {
 	return fileName, f.Name(), line
 }
 
-func GetMapKeys[K comparable, V comparable](m map[K]V) []K {
-	var keys = make([]K, 0)
+func GetMapKeys[K comparable, V any](m map[K]V) []K {
+	var keys = make([]K, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
 	}
 	return keys
 }
 
-func GetMapValues[K comparable, V comparable](m map[K]V) []V {
-	var values = make([]V, 0)
+func GetMapValues[K comparable, V any](m map[K]V) []V {
+	var values = make([]V, 0, len(m))
 	for _, v := range m {
 		values = append(values, v)
 	}

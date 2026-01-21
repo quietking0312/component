@@ -48,8 +48,9 @@ type Agent struct {
 	readChan      chan *Msg
 	writeChan     chan []byte
 	closeFlag     bool
-	closeChan     chan struct{}
 	closeCallback func() // 链接 关闭 回调
+	ctx           context.Context
+	cancel        context.CancelFunc
 	mu            sync.RWMutex
 }
 
@@ -60,6 +61,7 @@ type AuthFunc func(msg *Msg, a *Agent) (string, error)
 // parser 包解析
 // router 路由
 func NewAgent(conn Conn, parser PackParser, router RouterIface) *Agent {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Agent{
 		Id:        "",
 		conn:      conn,
@@ -71,7 +73,8 @@ func NewAgent(conn Conn, parser PackParser, router RouterIface) *Agent {
 		writeChan: make(chan []byte, 1024),
 		timeout:   20 * time.Minute,
 		closeFlag: false,
-		closeChan: make(chan struct{}, 1),
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 }
 
@@ -127,10 +130,8 @@ func (a *Agent) GetId() string {
 }
 
 func (a *Agent) Run() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	readCloseChan := make(chan int8)
-	go a.read(ctx, readCloseChan)
+	defer a.cancel()
+	go a.read()
 	ticker := time.NewTicker(a.timeout)
 	defer ticker.Stop()
 	for {
@@ -146,23 +147,18 @@ func (a *Agent) Run() {
 		case msg := <-a.readChan:
 			ticker.Reset(a.timeout)
 			a.router.Route(msg, a)
-		case <-a.closeChan: //
-			a.conn.Close()
-			return
-		case <-readCloseChan: // 读取协程 关闭
+		case <-a.ctx.Done(): // 读取协程 关闭
 			go a.Close()
 			return
 		}
 	}
 }
 
-func (a *Agent) read(ctx context.Context, c chan int8) {
-	defer func() {
-		c <- 1
-	}()
+func (a *Agent) read() {
+	defer a.cancel()
 	for {
 		select {
-		case <-ctx.Done():
+		case <-a.ctx.Done():
 			return
 		default:
 			_, msg, err := a.conn.Read()
@@ -175,7 +171,11 @@ func (a *Agent) read(ctx context.Context, c chan int8) {
 				a.log.Error(fmt.Errorf("unmarshal message, %v", err))
 				return
 			}
-			a.readChan <- m
+			select {
+			case a.readChan <- m:
+			case <-a.ctx.Done():
+				return
+			}
 		}
 	}
 }
@@ -191,7 +191,11 @@ func (a *Agent) Write(msg any) {
 func (a *Agent) Close() {
 	if !a.closeFlag {
 		a.closeFlag = true
-		a.closeChan <- struct{}{}
+		a.conn.Close()
+		a.cancel()
+		if a.closeCallback != nil {
+			a.closeCallback()
+		}
 	}
 }
 
