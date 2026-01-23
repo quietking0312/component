@@ -12,7 +12,7 @@ type Context[T any] struct {
 	Id string
 }
 
-func NewContext[T any](Id string) WriteIface[T] {
+func NewContext[T any](Id string) HandlerIface[T] {
 	return &Context[T]{
 		Id: Id,
 	}
@@ -21,9 +21,7 @@ func (c *Context[T]) Write(t T) error {
 	fmt.Println(fmt.Sprintf("频道%s 收到消息： %v", c.Id, t))
 	return nil
 }
-func (c *Context[T]) Close() error {
-	return nil
-}
+
 func (c *Context[T]) ID() string {
 	return c.Id
 }
@@ -56,25 +54,26 @@ func TestNewMPubSub(t *testing.T) {
 	pubFunc := func(ctx context.Context, key string, m []byte) error {
 		return rdb.Publish(ctx, key, m).Err()
 	}
-	subChannel := NewSubGroup[any]("1")
-	subChannel.Register(NewContext[any]("100"))
+	g := &Group[any]{}
+	subChannel := NewSubGroup[any]("1", g)
+	g.Set(NewContext[any]("100"))
 	sub, err := NewMPubSub[any]([]string{"test_01"}, subFunc, pubFunc)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sub.Start()
-	sub.Register("1", subChannel)
+	sub.Register(subChannel)
 	for i := 0; i < 200; i++ {
 		sub.Publish(Message[any]{
-			ChannelId: "1",
-			Data:      "hello world",
+			GroupId: "1",
+			Data:    "hello world",
 		})
 		time.Sleep(time.Second)
 		if i > 50 {
-			subChannel.Register(NewContext[any]("101"))
+			g.Set(NewContext[any]("101"))
 		}
 		if i > 100 {
-			subChannel.Register(NewContext[any]("102"))
+			g.Set(NewContext[any]("102"))
 		}
 	}
 	time.Sleep(5 * time.Minute)

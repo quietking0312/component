@@ -8,40 +8,83 @@ import (
 	"time"
 )
 
-type WriteSnapshot[T any] struct {
-	Key   string
-	Write WriteIface[T]
+type HandlerIface[T any] interface {
+	ID() string
+	Write(T) error
 }
 
-type WriteIface[T any] interface {
-	Write(T) error
-	Close() error
-	ID() string
+// 订阅子组
+type GroupIface[T any] interface {
+	GetSubList(T) []HandlerIface[T] // 根据消息 提供 具体要推送的 成员镜像
+	Delete(key string)
+	Set(iface HandlerIface[T])
 }
+
+type Worker[T any] struct {
+	id         int
+	g          *SubGroup[T]
+	stopCh     chan struct{}
+	lastActive time.Time
+	mu         sync.RWMutex
+}
+
+func (w *Worker[T]) start(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done(): // 收到整个组的关闭信号
+			return
+		case <-w.stopCh: // 收到单独关闭信号
+
+			return
+		case job, ok := <-w.g.msgChan:
+			if !ok {
+				return
+			}
+			w.mu.Lock()
+			w.lastActive = time.Now()
+			w.mu.Unlock()
+			w.g.distributeMessage(job, w.id)
+		}
+	}
+}
+
+func (w *Worker[T]) isIdle() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	idleTime := time.Since(w.lastActive)
+	return idleTime > time.Minute
+}
+
+var _ SubGroupIface[any] = (*SubGroup[any])(nil)
 
 // 订阅组
-
+// 提供了 分片批量写入
 type SubGroup[T any] struct {
 	id        string
-	group     sync.Map // K => WriteIface[T]
+	group     GroupIface[T]
 	msgChan   chan T
 	closeChan chan struct{}
 	closed    atomic.Bool
 	wg        sync.WaitGroup
 	logger    LoggerIface
+	config    SubGroupOption
 	ctx       context.Context
 	cancel    context.CancelFunc
+	metrics   *Metrics
+	workerSem chan struct{} //worker 容量
+	workers   []*Worker[T]
+	workersMu sync.RWMutex
 }
 
 type ChannelOption[T any] func(group *SubGroup[T])
 
-func withChannelLogger[T any](logger LoggerIface) ChannelOption[T] {
+func WithSubGroupLogger[T any](logger LoggerIface) ChannelOption[T] {
 	return func(g *SubGroup[T]) {
 		g.logger = logger
 	}
 }
 
-func NewSubGroup[T any](id string, opts ...ChannelOption[T]) *SubGroup[T] {
+func NewSubGroup[T any](id string, group GroupIface[T], opts ...ChannelOption[T]) *SubGroup[T] {
 	ctx, cancel := context.WithCancel(context.Background())
 	ch := &SubGroup[T]{
 		id:      id,
@@ -49,45 +92,95 @@ func NewSubGroup[T any](id string, opts ...ChannelOption[T]) *SubGroup[T] {
 		logger:  _log,
 		ctx:     ctx,
 		cancel:  cancel,
+		group:   group,
+		config: SubGroupOption{
+			WorkNum:    10,
+			MinWorkers: 2,
+			MaxWorkers: 50,
+			RetryCount: 3,
+			RetryDelay: 3 * time.Second,
+		},
+		metrics: &Metrics{},
 	}
 	for _, opt := range opts {
 		opt(ch)
 	}
+	ch.workerSem = make(chan struct{}, ch.config.MaxWorkers)
 	ch.start()
+	go ch.autoScaleWorkers()
 	return ch
-}
-func (c *SubGroup[T]) Register(writer WriteIface[T]) error {
-	if _, exists := c.group.Load(writer.ID()); exists {
-		c.group.Delete(writer.ID())
-	}
-	c.group.Store(writer.ID(), writer)
-	return nil
 }
 
 func (c *SubGroup[T]) ID() string {
 	return c.id
 }
 
-func (c *SubGroup[T]) Unregister(key string) error {
-	if writer, exists := c.group.LoadAndDelete(key); exists {
-		// 关闭写入器
-		go func() {
-			if err := writer.(WriteIface[T]).Close(); err != nil {
-				c.logger.Error(fmt.Errorf("failed to close err: %v", err))
-			}
-		}()
-		return nil
+func (c *SubGroup[T]) start() {
+	for i := 0; i < c.config.WorkNum; i++ {
+		c.workerSem <- struct{}{}
+		c.worker(i)
 	}
-	return nil
 }
 
-func (c *SubGroup[T]) start() {
-	for i := 0; i < 10; i++ {
-		c.wg.Add(1)
-		go c.worker(i)
-	}
+func (c *SubGroup[T]) autoScaleWorkers() {
 	c.wg.Add(1)
-	go c.cleanupWorker()
+	defer c.wg.Done()
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-ticker.C:
+			c.scaleWorkers()
+		}
+	}
+}
+
+func (c *SubGroup[T]) scaleWorkers() {
+	queueLen := len(c.msgChan)
+	currentWorkers := int(len(c.workers))
+	if queueLen > 50 && currentWorkers < c.config.MaxWorkers {
+		c.scaleUp()
+	} else if queueLen < 10 && currentWorkers > c.config.MinWorkers {
+		c.scaleDown()
+	}
+}
+
+func (c *SubGroup[T]) scaleUp() {
+	select {
+	case c.workerSem <- struct{}{}:
+		c.workersMu.Lock()
+		workerId := int(c.metrics.ActiveWorkers.Load() + 1)
+		c.workersMu.Unlock()
+		c.worker(workerId)
+	default:
+		// 扩容达到上限
+	}
+}
+
+func (c *SubGroup[T]) scaleDown() {
+	c.workersMu.Lock()
+	defer c.workersMu.Unlock()
+	if len(c.workers) <= c.config.MinWorkers {
+		return
+	}
+
+	newWorkers := make([]*Worker[T], 0, len(c.workers))
+	idleCont := 0
+	maxIdleToRemove := len(c.workers) - c.config.MinWorkers
+	for _, worker := range c.workers {
+		if idleCont < maxIdleToRemove && worker.isIdle() {
+			select {
+			case worker.stopCh <- struct{}{}:
+				idleCont++
+				continue
+			default:
+			}
+		}
+		newWorkers = append(newWorkers, worker)
+	}
+	c.workers = newWorkers
 }
 
 func (c *SubGroup[T]) Write(m T) error {
@@ -108,39 +201,51 @@ func (c *SubGroup[T]) Write(m T) error {
 }
 
 func (c *SubGroup[T]) worker(id int) {
-	defer c.wg.Done()
-	for {
-		select {
-		case <-c.ctx.Done():
-			return
-		case msg, ok := <-c.msgChan:
-			if !ok {
-				return
-			}
-			c.distributeMessage(msg, id)
-		}
+	c.workersMu.Lock()
+	w := &Worker[T]{
+		id:         id,
+		g:          c,
+		stopCh:     make(chan struct{}, 1),
+		lastActive: time.Now(),
 	}
+	c.workers = append(c.workers, w)
+	c.workersMu.Unlock()
+	go func() {
+		c.wg.Add(1)
+		c.metrics.ActiveWorkers.Add(1)
+		c.logger.Info(fmt.Sprintf("subGroup:%s  worker: %d create", c.id, id))
+		defer func() {
+			c.workersMu.Lock()
+			for i, worker := range c.workers {
+				if worker == w {
+					c.workers = append(c.workers[:i], c.workers[i+1:]...)
+				}
+			}
+			c.workersMu.Unlock()
+			c.wg.Done()
+			c.metrics.ActiveWorkers.Add(-1)
+			<-c.workerSem
+			c.logger.Info(fmt.Sprintf("subGroup:%s  worker: %d end", c.id, id))
+		}()
+		w.start(c.ctx)
+	}()
 }
 
 func (c *SubGroup[T]) distributeMessage(msg T, workerId int) {
-	var subscribers []WriteSnapshot[T]
-	c.group.Range(func(key, value any) bool {
-		subscribers = append(subscribers, WriteSnapshot[T]{Key: key.(string), Write: value.(WriteIface[T])})
-		return true
-	})
+	var subscribers = c.group.GetSubList(msg)
 	if len(subscribers) == 0 {
 		return
 	}
 	switch {
 	case len(subscribers) == 1:
-		c.writeToSubscriber(subscribers[0].Key, subscribers[0].Write, msg)
+		c.writeToSubscriber(subscribers[0], msg)
 	case len(subscribers) <= 10:
 		var wg sync.WaitGroup
 		for _, sub := range subscribers {
 			wg.Add(1)
-			go func(s WriteSnapshot[T]) {
+			go func(s HandlerIface[T]) {
 				defer wg.Done()
-				c.writeToSubscriber(s.Key, s.Write, msg)
+				c.writeToSubscriber(s, msg)
 			}(sub)
 		}
 	default:
@@ -149,7 +254,7 @@ func (c *SubGroup[T]) distributeMessage(msg T, workerId int) {
 }
 
 func (c *SubGroup[T]) batchDistribute(
-	subscribers []WriteSnapshot[T], msg T) {
+	subscribers []HandlerIface[T], msg T) {
 	batchSize := 10
 	for i := 0; i < len(subscribers); i += batchSize {
 		end := i + batchSize
@@ -157,12 +262,15 @@ func (c *SubGroup[T]) batchDistribute(
 			end = len(subscribers)
 		}
 		batch := subscribers[i:end]
+		sem := make(chan struct{}, 20) // 限制并发数
 		var wg sync.WaitGroup
 		for _, sub := range batch {
 			wg.Add(1)
-			go func(s WriteSnapshot[T]) {
+			sem <- struct{}{}
+			go func(s HandlerIface[T]) {
 				defer wg.Done()
-				c.writeToSubscriber(s.Key, s.Write, msg)
+				defer func() { <-sem }()
+				c.writeToSubscriber(s, msg)
 			}(sub)
 		}
 		wg.Wait()
@@ -170,21 +278,12 @@ func (c *SubGroup[T]) batchDistribute(
 
 }
 
-func (c *SubGroup[T]) WriteToSubscriber(key string, msg T) {
-	w, ok := c.group.Load(key)
-	if !ok {
-		return
-	}
-	writer := w.(WriteIface[T])
-	c.writeToSubscriber(key, writer, msg)
-}
-
 // 写入单个订阅者
-func (c *SubGroup[T]) writeToSubscriber(key string, writer WriteIface[T], msg T) {
+func (c *SubGroup[T]) writeToSubscriber(writer HandlerIface[T], msg T) {
 	var lastErr error
-	for i := 0; i < 10; i++ {
+	for i := 0; i < c.config.RetryCount; i++ {
 		if i > 1 {
-			time.Sleep(10 * time.Second)
+			time.Sleep(c.config.RetryDelay)
 		}
 		if err := writer.Write(msg); err != nil {
 			lastErr = err
@@ -193,28 +292,23 @@ func (c *SubGroup[T]) writeToSubscriber(key string, writer WriteIface[T], msg T)
 		return
 	}
 	c.logger.Error(fmt.Errorf("write err:%v", lastErr))
-	c.group.Delete(key)
+	c.group.Delete(writer.ID())
 }
 
-func (c *SubGroup[T]) cleanupWorker() {
-	defer c.wg.Done()
-	ticker := time.NewTicker(20 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-c.ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
+func (c *SubGroup[T]) Register(iface HandlerIface[T]) {
+	c.group.Set(iface)
+}
+
+func (c *SubGroup[T]) UnRegister(id string) {
+	c.group.Delete(id)
 }
 
 func (c *SubGroup[T]) Close() error {
 	if !c.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	c.cancel()
 	close(c.msgChan)
+	c.cancel()
 	done := make(chan struct{})
 	go func() {
 		c.wg.Wait()

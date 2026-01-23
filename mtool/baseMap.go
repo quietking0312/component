@@ -78,6 +78,24 @@ func (m *BaseMap[K, V]) Del(key K) {
 	m.data.Store(&newData)
 }
 
+func (m *BaseMap[K, V]) Deletes(keys []K) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data := m.data.Load()
+	var newData map[K]V
+	if data == nil {
+		newData = make(map[K]V)
+	} else if m.mode == BaseMapModeCOW {
+		newData = m.snapshot()
+	} else if m.mode == BaseMapModeLock {
+		newData = *data
+	}
+	for _, k := range keys {
+		delete(newData, k)
+	}
+	m.data.Store(&newData)
+}
+
 func (m *BaseMap[K, V]) Get(key K) (V, bool) {
 	if m.mode == BaseMapModeLock {
 		m.mu.RLock()
@@ -151,4 +169,10 @@ func (m *BaseMap[K, V]) Len() int {
 		defer m.mu.RUnlock()
 	}
 	return len(*data)
+}
+
+func (m *BaseMap[K, V]) Clear() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.data.Store(nil)
 }

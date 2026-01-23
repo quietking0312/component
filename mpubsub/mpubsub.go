@@ -1,9 +1,7 @@
 package mpubsub
 
 import (
-	"bytes"
 	"context"
-	"encoding/gob"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -11,30 +9,29 @@ import (
 )
 
 type SubGroupIface[T any] interface {
+	ID() string
 	Write(T) error
-	Register(writer WriteIface[T]) error
-	Unregister(key string) error
 }
 
 type Message[T any] struct {
-	ChannelId string
-	Data      T
+	GroupId string
+	Data    T
 }
 
 // 消息队列代理
 
 type MPubSub[T any] struct {
-	channel    []string
-	chanNext   chan string
-	subFunc    func(ctx context.Context, k string) (<-chan []byte, error)
-	pubFunc    func(ctx context.Context, k string, m []byte) error //
-	wg         sync.WaitGroup
-	ctx        context.Context
-	cancel     context.CancelFunc
-	subGroup   sync.Map // channelId ==>  SubGroupIface
-	bufferPool sync.Pool
-	isRunning  atomic.Bool
-	logger     LoggerIface
+	channel   []string
+	chanNext  chan string
+	subFunc   func(ctx context.Context, k string) (<-chan []byte, error)
+	pubFunc   func(ctx context.Context, k string, m []byte) error //
+	wg        sync.WaitGroup
+	ctx       context.Context
+	cancel    context.CancelFunc
+	subGroup  sync.Map // channelId ==>  SubGroupIface
+	parser    *GobParser
+	isRunning atomic.Bool
+	logger    LoggerIface
 }
 
 func NewMPubSub[T any](channel []string, subFunc func(ctx context.Context, k string) (<-chan []byte, error),
@@ -50,12 +47,8 @@ func NewMPubSub[T any](channel []string, subFunc func(ctx context.Context, k str
 		pubFunc:  pubFunc,
 		ctx:      ctx,
 		cancel:   chancel,
-		bufferPool: sync.Pool{
-			New: func() any {
-				return bytes.NewBuffer(make([]byte, 0, 1024))
-			},
-		},
-		logger: _log,
+		parser:   NewGobPaser(),
+		logger:   _log,
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -72,14 +65,14 @@ func WithLogger[T any](logger LoggerIface) Option[T] {
 }
 
 // Register 注册订阅组 到代理
-func (m *MPubSub[T]) Register(channelId string, channel SubGroupIface[T]) {
-	if _, e := m.subGroup.Load(channelId); !e {
-		m.subGroup.Store(channelId, channel)
+func (m *MPubSub[T]) Register(channel SubGroupIface[T]) {
+	if _, e := m.subGroup.Load(channel.ID()); !e {
+		m.subGroup.Store(channel.ID(), channel)
 	}
 }
 
-func (m *MPubSub[T]) UnRegister(channel string) {
-	m.subGroup.Delete(channel)
+func (m *MPubSub[T]) UnRegister(channelId string) {
+	m.subGroup.Delete(channelId)
 }
 
 func (m *MPubSub[T]) Start() {
@@ -147,19 +140,12 @@ func (m *MPubSub[T]) handleMessage(msgBytes []byte) {
 			m.logger.Error(fmt.Errorf("panic in handle message %v", r))
 		}
 	}()
-	buf := m.bufferPool.Get().(*bytes.Buffer)
-	buf.Reset()
-	buf.Write(msgBytes)
-	defer func() {
-		m.bufferPool.Put(buf)
-	}()
-	decoder := gob.NewDecoder(buf)
 	var msg Message[T]
-	if err := decoder.Decode(&msg); err != nil {
+	if err := m.parser.Decoder(msgBytes, &msg); err != nil {
 		m.logger.Error(fmt.Errorf("failed to decode message err: %v", err))
 		return
 	}
-	if val, ok := m.subGroup.Load(msg.ChannelId); ok {
+	if val, ok := m.subGroup.Load(msg.GroupId); ok {
 		subscribers := val.(SubGroupIface[T])
 		if err := subscribers.Write(msg.Data); err != nil {
 			m.logger.Error(fmt.Errorf("failed to write to subGroup %v", err))
@@ -171,16 +157,10 @@ func (m *MPubSub[T]) Publish(msg Message[T]) error {
 	if !m.isRunning.Load() {
 		return fmt.Errorf("ErrNotRunning")
 	}
-	buf := m.bufferPool.Get().(*bytes.Buffer)
-	buf.Reset()
-	defer func() {
-		m.bufferPool.Put(buf)
-	}()
-	encode := gob.NewEncoder(buf)
-	if err := encode.Encode(msg); err != nil {
+	data, err := m.parser.Encoder(msg)
+	if err != nil {
 		return err
 	}
-	data := buf.Bytes()
 	channel := m.channelNext()
 	if err := m.pubFunc(m.ctx, channel, data); err != nil {
 		return err
