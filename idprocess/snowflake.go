@@ -57,6 +57,8 @@ func (w *Worker) GetId() int64 {
 			for now <= w.timestamp { // 等待下一毫秒
 				now = time.Now().UnixNano() / 1e6
 			}
+			w.timestamp = now
+			w.number = 0
 		}
 	} else {
 		w.number = 0
