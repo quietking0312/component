@@ -3,65 +3,68 @@ package mrpc
 import (
 	"context"
 	"fmt"
-	pb "github.com/quietking0312/component/mrpc/proto"
+	"net"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/reflection"
-	"net"
-	"os"
-	"os/signal"
-	"syscall"
 )
 
-type Server struct {
-	pb.UnimplementedServiceServer
+// ServerOption gRPC 服务端配置选项
+type ServerOption struct {
+	Address string              // 监听地址，如 ":8888"
+	Options []grpc.ServerOption // 自定义 gRPC 选项
 }
 
-func (s *Server) SayHello(ctx context.Context, req *pb.HelloReq) (*pb.HelloReply, error) {
-	return &pb.HelloReply{
-		Message: req.GetName() + "  golang",
-	}, nil
+// DefaultServerOption 返回默认服务端配置
+func DefaultServerOption() *ServerOption {
+	return &ServerOption{
+		Address: ":8888",
+	}
 }
 
-func Serve() {
-	lis, err := net.Listen("tcp", ":8888")
-	if err != nil {
-		fmt.Println("", err)
-		return
+// Serve 启动 gRPC 服务端
+//   - opt: 服务端配置，为 nil 时使用默认配置
+//   - register: 服务注册函数，用于注册业务 Service
+//
+// 使用示例：
+//
+//	mrpc.Serve(nil, func(s *grpc.Server) {
+//	    pb.RegisterMyServiceServer(s, &myServiceImpl{})
+//	})
+func Serve(opt *ServerOption, register func(s *grpc.Server)) error {
+	if opt == nil {
+		opt = DefaultServerOption()
 	}
 
-	s := grpc.NewServer()
-	pb.RegisterServiceServer(s, &Server{})
-	reflection.Register(s)
-	go func() {
-		if err := s.Serve(lis); err != nil {
-			fmt.Println(err)
-		}
-	}()
-	signChan := make(chan os.Signal, 1)
-	signal.Notify(signChan, syscall.SIGINT, syscall.SIGTERM)
-	<-signChan
-	fmt.Println("shutting down the server...")
-	s.GracefulStop()
-	fmt.Println("server has been shut down gracefully")
+	lis, err := net.Listen("tcp", opt.Address)
+	if err != nil {
+		return fmt.Errorf("rpc listen failed: %w", err)
+	}
+
+	s := grpc.NewServer(opt.Options...)
+	if register != nil {
+		register(s)
+	}
+
+	return s.Serve(lis)
 }
 
-func Client() {
-	opts := grpc.WithTransportCredentials(insecure.NewCredentials())
-	conn, err := grpc.Dial("127.0.0.1:8888", opts)
-	if err != nil {
-		fmt.Println("", err)
-		return
+// Dial 创建 gRPC 客户端连接
+//   - target: 服务端地址，如 "127.0.0.1:8888"
+//   - opts: 可选的 DialOption
+func Dial(target string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	defaultOpts := []grpc.DialOption{
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
+	defaultOpts = append(defaultOpts, opts...)
+	return grpc.Dial(target, defaultOpts...)
+}
 
-	client := pb.NewServiceClient(conn)
-	req := &pb.HelloReq{
-		Name: "helloworld",
+// DialContext 带上下文的 gRPC 客户端连接创建
+func DialContext(ctx context.Context, target string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	defaultOpts := []grpc.DialOption{
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
-	resp, err := client.SayHello(context.Background(), req)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	fmt.Println(resp.Message)
+	defaultOpts = append(defaultOpts, opts...)
+	return grpc.DialContext(ctx, target, defaultOpts...)
 }

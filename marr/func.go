@@ -77,24 +77,26 @@ func CompareByKey[T any, K comparable](a, b []T, keyFn KeyFunc[T, K], keepOrder 
 // getValuesByKeys 根据键从映射中获取值
 func getValuesByKeys[K comparable, T any](m map[K]T, s *Set[K]) []T {
 	result := make([]T, 0, s.Size())
-	for k := range s.data {
+	s.Range(func(k K) bool {
 		if v, ok := m[k]; ok {
 			result = append(result, v)
 		}
-	}
+		return true
+	})
 	return result
 }
 
 // mergeValuesByKeys 合并两个映射中的值（优先使用 A 中的值）
 func mergeValuesByKeys[K comparable, T any](mapA, mapB map[K]T, s *Set[K]) []T {
 	result := make([]T, 0, s.Size())
-	for k := range s.data {
+	s.Range(func(k K) bool {
 		if v, ok := mapA[k]; ok {
 			result = append(result, v)
 		} else if v, ok := mapB[k]; ok {
 			result = append(result, v)
 		}
-	}
+		return true
+	})
 	return result
 }
 

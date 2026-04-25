@@ -1,4 +1,4 @@
-package mtool
+package mjwt
 
 import (
 	"fmt"

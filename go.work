@@ -1,0 +1,35 @@
+go 1.25.0
+
+use (
+	./m2fa
+	./marr
+	./mbar
+	./mcachedb
+	./mconf
+	./mcron
+	./mcyptos
+	./memail
+	./mencoding
+	./merr
+	./mexcel
+	./mhttp
+	./middleware
+	./mjwt
+	./mlog
+	./mmath
+	./mmen
+	./mpubsub
+	./mrand
+	./mredis
+	./mrpc
+	./msnowflake
+	./msock
+	./msql
+	./mssh
+	./mstorage
+	./mstore
+	./mtime
+	./mtimewheel
+	./mtool
+	./mutils
+)

@@ -1,4 +1,4 @@
-package mtool
+package mjwt
 
 import (
 	"github.com/golang-jwt/jwt/v5"

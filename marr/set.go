@@ -50,6 +50,25 @@ func (s *Set[T]) Size() int {
 	return len(s.data)
 }
 
+// Items 返回集合中所有元素的切片
+func (s *Set[T]) Items() []T {
+	result := make([]T, 0, len(s.data))
+	for k := range s.data {
+		result = append(result, k)
+	}
+	return result
+}
+
+// Range 遍历集合中的每个元素，执行回调函数
+// 如果回调返回 false，则停止遍历
+func (s *Set[T]) Range(f func(T) bool) {
+	for k := range s.data {
+		if !f(k) {
+			break
+		}
+	}
+}
+
 // IsEmpty 判断是否为空
 func (s *Set[T]) IsEmpty() bool {
 	return len(s.data) == 0

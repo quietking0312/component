@@ -5,14 +5,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
 )
 
 var (
-	// 全局 viper 实例
-	Viper *viper.Viper
+	// 全局默认 viper 实例，Init 前为 nil
+	viperInstance *viper.Viper
 )
 
 // Config 配置管理器
@@ -20,234 +21,235 @@ type Config struct {
 	v *viper.Viper
 }
 
-// Init 初始化配置
-func Init(configPath string) error {
-	Viper = viper.New()
+// Init 初始化全局配置
+//   - configPath: 配置文件路径，为空时使用默认搜索路径
+//   - envPrefix: 环境变量前缀，为空时不启用环境变量
+func Init(configPath string, envPrefix string) error {
+	v := viper.New()
 
 	// 设置默认值
-	setDefaults()
+	setDefaults(v)
 
 	// 配置文件路径
 	if configPath != "" {
-		Viper.SetConfigFile(configPath)
+		v.SetConfigFile(configPath)
 	} else {
-		// 默认配置文件路径
-		Viper.SetConfigName("config")
-		Viper.SetConfigType("yaml")
-		Viper.AddConfigPath(".")
-		Viper.AddConfigPath("./config")
-		Viper.AddConfigPath("/etc/admin/")
+		v.SetConfigName("config")
+		v.SetConfigType("yaml")
+		v.AddConfigPath(".")
+		v.AddConfigPath("./config")
 	}
 
 	// 读取环境变量
-	Viper.SetEnvPrefix("ADMIN")
-	Viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	Viper.AutomaticEnv()
+	if envPrefix != "" {
+		v.SetEnvPrefix(envPrefix)
+		v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+		v.AutomaticEnv()
+	}
 
 	// 读取配置文件
-	if err := Viper.ReadInConfig(); err != nil {
-		// 配置文件不存在时忽略错误（使用默认值）
+	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
 			return fmt.Errorf("read config file failed: %w", err)
 		}
 	}
 
+	viperInstance = v
 	return nil
 }
 
-// InitWithConfig 使用自定义配置初始化
+// InitWithConfig 使用自定义 viper 实例初始化全局配置
 func InitWithConfig(v *viper.Viper) {
-	Viper = v
+	viperInstance = v
 }
 
 // setDefaults 设置默认值
-func setDefaults() {
-	// 服务器配置
-	Viper.SetDefault("server.host", "0.0.0.0")
-	Viper.SetDefault("server.port", 8080)
-	Viper.SetDefault("server.mode", "debug")
-	Viper.SetDefault("server.read_timeout", 60)
-	Viper.SetDefault("server.write_timeout", 60)
+func setDefaults(v *viper.Viper) {
+	v.SetDefault("server.host", "0.0.0.0")
+	v.SetDefault("server.port", 8080)
+	v.SetDefault("server.mode", "debug")
+	v.SetDefault("server.read_timeout", 60)
+	v.SetDefault("server.write_timeout", 60)
 
-	// 数据库配置
-	Viper.SetDefault("database.driver", "mysql")
-	Viper.SetDefault("database.host", "localhost")
-	Viper.SetDefault("database.port", 3306)
-	Viper.SetDefault("database.database", "admin")
-	Viper.SetDefault("database.username", "root")
-	Viper.SetDefault("database.password", "")
-	Viper.SetDefault("database.charset", "utf8mb4")
-	Viper.SetDefault("database.max_open_conns", 100)
-	Viper.SetDefault("database.max_idle_conns", 10)
+	v.SetDefault("database.driver", "mysql")
+	v.SetDefault("database.host", "localhost")
+	v.SetDefault("database.port", 3306)
+	v.SetDefault("database.database", "admin")
+	v.SetDefault("database.username", "root")
+	v.SetDefault("database.password", "")
+	v.SetDefault("database.charset", "utf8mb4")
+	v.SetDefault("database.max_open_conns", 100)
+	v.SetDefault("database.max_idle_conns", 10)
 
-	// 日志配置
-	Viper.SetDefault("log.level", "info")
-	Viper.SetDefault("log.format", "console")
-	Viper.SetDefault("log.output", "./logs/app.log")
-	Viper.SetDefault("log.console", true)
-	Viper.SetDefault("log.max_size", 100)
-	Viper.SetDefault("log.max_backups", 10)
-	Viper.SetDefault("log.max_age", 30)
+	v.SetDefault("log.level", "info")
+	v.SetDefault("log.format", "console")
+	v.SetDefault("log.output", "./logs/app.log")
+	v.SetDefault("log.console", true)
+	v.SetDefault("log.max_size", 100)
+	v.SetDefault("log.max_backups", 10)
+	v.SetDefault("log.max_age", 30)
 
-	// JWT配置
-	Viper.SetDefault("jwt.secret", "your-secret-key")
-	Viper.SetDefault("jwt.expire", 86400)
-	Viper.SetDefault("jwt.issuer", "admin-server")
+	v.SetDefault("jwt.secret", "your-secret-key")
+	v.SetDefault("jwt.expire", 86400)
+	v.SetDefault("jwt.issuer", "admin-server")
 }
 
 // GetConfig 获取配置管理器实例
 func GetConfig() *Config {
-	return &Config{v: Viper}
+	return &Config{v: getViper()}
 }
 
-// GetViper 获取 viper 实例
-func GetViper() *viper.Viper {
-	return Viper
+// getViper 安全获取全局 viper 实例
+func getViper() *viper.Viper {
+	if viperInstance == nil {
+		viperInstance = viper.New()
+	}
+	return viperInstance
 }
 
 // ========== 配置读取方法 ==========
 
 // Get 获取配置值
 func Get(key string) interface{} {
-	return Viper.Get(key)
+	return getViper().Get(key)
 }
 
 // GetString 获取字符串配置
 func GetString(key string) string {
-	return Viper.GetString(key)
+	return getViper().GetString(key)
 }
 
 // GetInt 获取整数配置
 func GetInt(key string) int {
-	return Viper.GetInt(key)
+	return getViper().GetInt(key)
 }
 
 // GetInt32 获取 int32 配置
 func GetInt32(key string) int32 {
-	return Viper.GetInt32(key)
+	return getViper().GetInt32(key)
 }
 
 // GetInt64 获取 int64 配置
 func GetInt64(key string) int64 {
-	return Viper.GetInt64(key)
+	return getViper().GetInt64(key)
 }
 
 // GetUint 获取无符号整数配置
 func GetUint(key string) uint {
-	return Viper.GetUint(key)
+	return getViper().GetUint(key)
 }
 
 // GetBool 获取布尔配置
 func GetBool(key string) bool {
-	return Viper.GetBool(key)
+	return getViper().GetBool(key)
 }
 
 // GetFloat64 获取浮点数配置
 func GetFloat64(key string) float64 {
-	return Viper.GetFloat64(key)
+	return getViper().GetFloat64(key)
 }
 
 // GetTime 获取时间配置
-func GetTime(key string) interface{} {
-	return Viper.GetTime(key)
+func GetTime(key string) time.Time {
+	return getViper().GetTime(key)
 }
 
 // GetDuration 获取时长配置
-func GetDuration(key string) interface{} {
-	return Viper.GetDuration(key)
+func GetDuration(key string) time.Duration {
+	return getViper().GetDuration(key)
 }
 
 // GetStringSlice 获取字符串数组配置
 func GetStringSlice(key string) []string {
-	return Viper.GetStringSlice(key)
+	return getViper().GetStringSlice(key)
 }
 
 // GetIntSlice 获取整数数组配置
 func GetIntSlice(key string) []int {
-	return Viper.GetIntSlice(key)
+	return getViper().GetIntSlice(key)
 }
 
 // GetStringMap 获取 Map 配置
 func GetStringMap(key string) map[string]interface{} {
-	return Viper.GetStringMap(key)
+	return getViper().GetStringMap(key)
 }
 
 // GetStringMapString 获取 Map[string]string 配置
 func GetStringMapString(key string) map[string]string {
-	return Viper.GetStringMapString(key)
+	return getViper().GetStringMapString(key)
 }
 
 // IsSet 检查配置是否存在
 func IsSet(key string) bool {
-	return Viper.IsSet(key)
+	return getViper().IsSet(key)
 }
 
 // Sub 获取子配置
 func Sub(key string) *viper.Viper {
-	return Viper.Sub(key)
+	return getViper().Sub(key)
 }
 
 // AllSettings 获取所有配置
 func AllSettings() map[string]interface{} {
-	return Viper.AllSettings()
+	return getViper().AllSettings()
 }
 
 // ========== 配置设置方法 ==========
 
 // Set 设置配置值
 func Set(key string, value interface{}) {
-	Viper.Set(key, value)
+	getViper().Set(key, value)
 }
 
 // SetDefault 设置默认值
 func SetDefault(key string, value interface{}) {
-	Viper.SetDefault(key, value)
+	getViper().SetDefault(key, value)
 }
 
 // ========== 配置文件操作 ==========
 
 // ReadInConfig 读取配置文件
 func ReadInConfig() error {
-	return Viper.ReadInConfig()
+	return getViper().ReadInConfig()
 }
 
 // WriteConfig 写入配置文件
 func WriteConfig() error {
-	return Viper.WriteConfig()
+	return getViper().WriteConfig()
 }
 
 // SafeWriteConfig 安全写入配置文件（不存在时才写入）
 func SafeWriteConfig() error {
-	return Viper.SafeWriteConfig()
+	return getViper().SafeWriteConfig()
 }
 
 // WriteConfigAs 写入配置文件到指定路径
 func WriteConfigAs(filename string) error {
-	return Viper.WriteConfigAs(filename)
+	return getViper().WriteConfigAs(filename)
 }
 
 // SafeWriteConfigAs 安全写入配置文件到指定路径
 func SafeWriteConfigAs(filename string) error {
-	return Viper.SafeWriteConfigAs(filename)
+	return getViper().SafeWriteConfigAs(filename)
 }
 
 // ========== 配置监听 ==========
 
 // WatchConfig 监听配置文件变化
 func WatchConfig() {
-	Viper.WatchConfig()
+	getViper().WatchConfig()
 }
 
 // OnConfigChange 配置变化回调
 func OnConfigChange(run func()) {
-	Viper.OnConfigChange(func(in fsnotify.Event) {
+	getViper().OnConfigChange(func(in fsnotify.Event) {
 		run()
 	})
 }
 
 // OnConfigChangeEvent 配置变化回调（带事件信息）
 func OnConfigChangeEvent(run func(event fsnotify.Event)) {
-	Viper.OnConfigChange(func(in fsnotify.Event) {
+	getViper().OnConfigChange(func(in fsnotify.Event) {
 		run(in)
 	})
 }
@@ -256,22 +258,22 @@ func OnConfigChangeEvent(run func(event fsnotify.Event)) {
 
 // ConfigFileUsed 获取当前使用的配置文件路径
 func ConfigFileUsed() string {
-	return Viper.ConfigFileUsed()
+	return getViper().ConfigFileUsed()
 }
 
 // BindEnv 绑定环境变量
 func BindEnv(input ...string) error {
-	return Viper.BindEnv(input...)
+	return getViper().BindEnv(input...)
 }
 
 // Unmarshal 反序列化配置到结构体
 func Unmarshal(rawVal interface{}, opts ...viper.DecoderConfigOption) error {
-	return Viper.Unmarshal(rawVal, opts...)
+	return getViper().Unmarshal(rawVal, opts...)
 }
 
 // UnmarshalKey 反序列化指定 key 到结构体
 func UnmarshalKey(key string, rawVal interface{}, opts ...viper.DecoderConfigOption) error {
-	return Viper.UnmarshalKey(key, rawVal, opts...)
+	return getViper().UnmarshalKey(key, rawVal, opts...)
 }
 
 // ========== 配置对象方法 ==========

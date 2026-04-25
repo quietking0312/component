@@ -15,6 +15,11 @@ import (
 	"go.uber.org/zap"
 )
 
+// contextKey 用于 context.WithValue 的私有类型，避免与其他包冲突
+type contextKey string
+
+const contextKeyRequestID contextKey = "request_id"
+
 // Job 任务接口
 type Job interface {
 	// Run 执行任务
@@ -281,7 +286,7 @@ func (c *Cron) executeJob(entry *Entry) (err error) {
 	defer cancel()
 
 	// 添加 request_id 便于追踪
-	ctx = context.WithValue(ctx, "request_id", fmt.Sprintf("cron_%s_%d", entry.Name, start.Unix()))
+	ctx = context.WithValue(ctx, contextKeyRequestID, fmt.Sprintf("cron_%s_%d", entry.Name, start.Unix()))
 
 	// 记录开始日志
 	mlog.Info("job started",
