@@ -7,7 +7,7 @@ import (
 )
 
 func TestInitLog(t *testing.T) {
-	_ = InitLog()
+	_ = Init(nil)
 	Debug("hello, world")
 	Error("world", zap.Error(fmt.Errorf("sss")))
 }

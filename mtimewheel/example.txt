@@ -1,0 +1,448 @@
+package mtimewheel
+
+// Package mtimewheel 使用示例
+//
+// 本文件展示如何使用时间轮进行延迟任务调度
+
+/*
+
+========== 基本使用 ==========
+
+package main
+
+import (
+    "admin_server/component/mtimewheel"
+    "context"
+    "fmt"
+    "time"
+)
+
+func main() {
+    // 创建时间轮
+    tw := mtimewheel.New()
+
+    // 启动时间轮
+    tw.Start()
+    defer tw.Stop()
+
+    // 添加延迟任务
+    tw.AddTask("task-1", 5*time.Second, func(ctx context.Context) error {
+        fmt.Println("Task executed after 5 seconds")
+        return nil
+    })
+
+    // 防止程序退出
+    time.Sleep(10 * time.Second)
+}
+
+
+========== 自定义配置 ==========
+
+func main() {
+    // 创建自定义配置的时间轮
+    // tick: 50ms, wheelSize: 200
+    // 支持的最大延迟: 50ms * 200 = 10s
+    tw := mtimewheel.New(
+        mtimewheel.WithTick(50*time.Millisecond),
+        mtimewheel.WithWheelSize(200),
+    )
+
+    tw.Start()
+    defer tw.Stop()
+
+    // 添加任务...
+}
+
+
+========== 添加延迟任务 ==========
+
+func main() {
+    tw := mtimewheel.New()
+    tw.Start()
+    defer tw.Stop()
+
+    // 方式1: 直接调用 AddTask
+    tw.AddTask("task-1", 1*time.Second, func(ctx context.Context) error {
+        fmt.Println("1 second later")
+        return nil
+    })
+
+    // 方式2: 使用便捷的 Delay 函数
+    mtimewheel.Delay(tw, "task-2", 2*time.Second, func(ctx context.Context) error {
+        fmt.Println("2 seconds later")
+        return nil
+    })
+
+    // 方式3: 使用类似 time.AfterFunc 的方式
+    mtimewheel.After(3*time.Second, func() {
+        fmt.Println("3 seconds later")
+    })
+
+    time.Sleep(5 * time.Second)
+}
+
+
+========== 取消任务 ==========
+
+func main() {
+    tw := mtimewheel.New()
+    tw.Start()
+    defer tw.Stop()
+
+    // 添加任务
+    tw.AddTask("cancelable-task", 5*time.Second, func(ctx context.Context) error {
+        fmt.Println("This should not be printed")
+        return nil
+    })
+
+    // 2秒后取消任务
+    time.Sleep(2 * time.Second)
+    cancelled := tw.CancelTask("cancelable-task")
+    if cancelled {
+        fmt.Println("Task cancelled successfully")
+    }
+
+    time.Sleep(5 * time.Second)
+}
+
+
+========== 获取任务信息 ==========
+
+func main() {
+    tw := mtimewheel.New()
+    tw.Start()
+    defer tw.Stop()
+
+    // 添加任务
+    tw.AddTask("my-task", 10*time.Second, func(ctx context.Context) error {
+        return nil
+    })
+
+    // 获取任务信息
+    task := tw.GetTask("my-task")
+    if task != nil {
+        fmt.Printf("Task ID: %s\n", task.ID)
+        fmt.Printf("Delay: %v\n", task.Delay)
+        fmt.Printf("Execute At: %v\n", task.ExecuteAt)
+        fmt.Printf("Created At: %v\n", task.CreatedAt)
+    }
+
+    // 获取任务数量
+    fmt.Printf("Total tasks: %d\n", tw.TaskCount())
+    fmt.Printf("Executed tasks: %d\n", tw.ExecutedCount())
+}
+
+
+========== 使用默认时间轮 ==========
+
+func main() {
+    // 初始化默认时间轮（全局单例）
+    mtimewheel.InitDefault()
+    defer mtimewheel.StopDefault()
+
+    // 使用默认时间轮
+    tw := mtimewheel.Default()
+
+    tw.AddTask("task-1", 1*time.Second, func(ctx context.Context) error {
+        fmt.Println("Task 1 executed")
+        return nil
+    })
+
+    // 或使用便捷的 After 函数
+    mtimewheel.After(2*time.Second, func() {
+        fmt.Println("Task 2 executed")
+    })
+
+    time.Sleep(3 * time.Second)
+}
+
+
+========== 分层时间轮（大范围延迟） ==========
+
+func main() {
+    // 创建分层时间轮
+    // 支持毫秒到小时的延迟
+    htw := mtimewheel.NewHierarchical()
+    htw.Start()
+    defer htw.Stop()
+
+    // 毫秒级延迟
+    htw.AddTask("ms-task", 500*time.Millisecond, func(ctx context.Context) error {
+        fmt.Println("500ms later")
+        return nil
+    })
+
+    // 秒级延迟
+    htw.AddTask("sec-task", 5*time.Second, func(ctx context.Context) error {
+        fmt.Println("5s later")
+        return nil
+    })
+
+    // 分钟级延迟
+    htw.AddTask("min-task", 2*time.Minute, func(ctx context.Context) error {
+        fmt.Println("2m later")
+        return nil
+    })
+
+    // 小时级延迟
+    htw.AddTask("hour-task", 1*time.Hour, func(ctx context.Context) error {
+        fmt.Println("1h later")
+        return nil
+    })
+
+    select {}
+}
+
+
+========== 批量添加任务 ==========
+
+func main() {
+    tw := mtimewheel.New()
+    tw.Start()
+    defer tw.Stop()
+
+    var wg sync.WaitGroup
+
+    // 批量添加1000个任务
+    for i := 0; i < 1000; i++ {
+        wg.Add(1)
+        taskID := fmt.Sprintf("task-%d", i)
+        delay := time.Duration(i%10+1) * time.Second
+
+        tw.AddTask(taskID, delay, func(ctx context.Context) error {
+            defer wg.Done()
+            fmt.Printf("Task %s executed\n", taskID)
+            return nil
+        })
+    }
+
+    // 等待所有任务执行完成
+    wg.Wait()
+    fmt.Println("All tasks completed")
+}
+
+
+========== 实际应用场景 ==========
+
+// 1. 订单超时取消
+func OrderTimeoutCancel(orderID string) {
+    mtimewheel.After(30*time.Minute, func() {
+        // 取消超时未支付的订单
+        cancelOrder(orderID)
+    })
+}
+
+// 2. 缓存过期
+func SetCacheWithTTL(key string, value interface{}, ttl time.Duration) {
+    // 设置缓存
+    cache.Set(key, value)
+
+    // 延迟删除
+    mtimewheel.After(ttl, func() {
+        cache.Delete(key)
+    })
+}
+
+// 3. 限流令牌桶补充
+type TokenBucket struct {
+    tokens int
+    capacity int
+}
+
+func (tb *TokenBucket) Start() {
+    // 每100ms补充一个令牌
+    mtimewheel.InitDefault()
+
+    mtimewheel.Default().AddTask("token-refill", 100*time.Millisecond, func(ctx context.Context) error {
+        if tb.tokens < tb.capacity {
+            tb.tokens++
+        }
+        return nil
+    })
+}
+
+// 4. 延迟消息发送
+func SendDelayedMessage(userID string, message string, delay time.Duration) {
+    mtimewheel.After(delay, func() {
+        sendNotification(userID, message)
+    })
+}
+
+// 5. 重试机制
+func RetryWithDelay(taskID string, fn func() error, maxRetries int) {
+    var attempt int
+
+    var execute func()
+    execute = func() {
+        attempt++
+        if err := fn(); err != nil {
+            if attempt < maxRetries {
+                // 指数退避
+                delay := time.Duration(attempt) * time.Second
+                mtimewheel.After(delay, execute)
+            }
+        }
+    }
+
+    execute()
+}
+
+
+========== 完整示例：订单系统 ==========
+
+package main
+
+import (
+    "admin_server/component/mlog"
+    "admin_server/component/mtimewheel"
+    "context"
+    "fmt"
+    "time"
+    "go.uber.org/zap"
+)
+
+type Order struct {
+    ID        string
+    UserID    string
+    Amount    float64
+    Status    string
+    CreatedAt time.Time
+}
+
+var orders = make(map[string]*Order)
+
+func main() {
+    // 初始化日志
+    mlog.Init(&mlog.Config{
+        Level:   "info",
+        Format:  "console",
+        Console: true,
+    })
+
+    // 创建时间轮
+    tw := mtimewheel.New()
+    tw.Start()
+    defer tw.Stop()
+
+    // 创建订单
+    order := createOrder("user-123", 99.99)
+
+    // 设置30分钟超时取消
+    tw.AddTask(fmt.Sprintf("order-timeout-%s", order.ID), 30*time.Minute, func(ctx context.Context) error {
+        return handleOrderTimeout(order.ID)
+    })
+
+    // 设置5分钟后发送提醒
+    tw.AddTask(fmt.Sprintf("order-remind-%s", order.ID), 5*time.Minute, func(ctx context.Context) error {
+        return sendPaymentReminder(order.ID)
+    })
+
+    mlog.Info("Order created with timeout",
+        zap.String("order_id", order.ID),
+        zap.Float64("amount", order.Amount),
+    )
+
+    // 模拟订单支付
+    time.Sleep(10 * time.Second)
+    payOrder(order.ID)
+
+    // 防止退出
+    time.Sleep(1 * time.Hour)
+}
+
+func createOrder(userID string, amount float64) *Order {
+    order := &Order{
+        ID:        fmt.Sprintf("ORDER-%d", time.Now().Unix()),
+        UserID:    userID,
+        Amount:    amount,
+        Status:    "pending",
+        CreatedAt: time.Now(),
+    }
+    orders[order.ID] = order
+    return order
+}
+
+func handleOrderTimeout(orderID string) error {
+    order, ok := orders[orderID]
+    if !ok {
+        return fmt.Errorf("order not found: %s", orderID)
+    }
+
+    if order.Status == "pending" {
+        order.Status = "cancelled"
+        mlog.Info("Order cancelled due to timeout",
+            zap.String("order_id", orderID),
+        )
+        // 释放库存、发送通知等...
+    }
+
+    return nil
+}
+
+func sendPaymentReminder(orderID string) error {
+    order, ok := orders[orderID]
+    if !ok {
+        return fmt.Errorf("order not found: %s", orderID)
+    }
+
+    if order.Status == "pending" {
+        mlog.Info("Sending payment reminder",
+            zap.String("order_id", orderID),
+            zap.String("user_id", order.UserID),
+        )
+        // 发送短信/邮件提醒...
+    }
+
+    return nil
+}
+
+func payOrder(orderID string) {
+    order, ok := orders[orderID]
+    if !ok {
+        return
+    }
+
+    order.Status = "paid"
+    mlog.Info("Order paid",
+        zap.String("order_id", orderID),
+    )
+
+    // 设置发货超时检查（24小时）
+    mtimewheel.Default().AddTask(
+        fmt.Sprintf("delivery-timeout-%s", orderID),
+        24*time.Hour,
+        func(ctx context.Context) error {
+            return handleDeliveryTimeout(orderID)
+        },
+    )
+}
+
+func handleDeliveryTimeout(orderID string) error {
+    mlog.Warn("Order delivery timeout",
+        zap.String("order_id", orderID),
+    )
+    // 提醒商家发货...
+    return nil
+}
+
+
+========== 注意事项 ==========
+
+1. 时间轮的最大延迟 = tick * wheelSize
+   例如：tick=100ms, wheelSize=100，最大延迟为 10s
+
+2. 如果需要更大范围的延迟，请使用分层时间轮（HierarchicalTimeWheel）
+
+3. 任务回调函数中的 panic 会被自动捕获，不会影响其他任务
+
+4. 建议在生产环境使用分层时间轮，支持从毫秒到天的延迟
+
+5. 任务执行时间过长可能会影响精度，建议将耗时操作异步处理
+
+6. 时间轮是单线程调度的，适合大量轻量级延迟任务
+
+7. 停止时间轮时，未执行的任务会被丢弃，请确保在停止前处理重要任务
+
+8. 使用 Default() 获取的全局时间轮是单例的，应用生命周期内只需 InitDefault() 一次
+
+*/

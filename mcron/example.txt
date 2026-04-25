@@ -1,0 +1,332 @@
+package mcron
+
+// Package mcron 使用示例
+//
+// 本文件展示如何使用 mcron 包进行定时任务调度
+
+/*
+
+========== 基本使用 ==========
+
+package main
+
+import (
+    "admin_server/component/mcron"
+    "context"
+    "fmt"
+    "time"
+)
+
+func main() {
+    // 创建调度器
+    cron := mcron.New()
+
+    // 启动调度器
+    cron.Start()
+    defer cron.Stop()
+
+    // 添加每分钟执行的任务
+    cron.AddFunc("minute-job", mcron.Every(time.Minute), func(ctx context.Context) error {
+        fmt.Println("每分钟执行一次")
+        return nil
+    })
+
+    // 防止程序退出
+    select {}
+}
+
+
+========== Cron 表达式 ==========
+
+// 每秒执行一次
+cron.AddFunc("second-job", mcron.CronExpr("* * * * * *"), jobFunc)
+
+// 每分钟执行一次
+cron.AddFunc("minute-job", mcron.Cron("0 * * * * *"), jobFunc)
+
+// 每小时执行一次
+cron.AddFunc("hour-job", mcron.Cron("0 0 * * * *"), jobFunc)
+
+// 每天上午9点执行
+cron.AddFunc("daily-job", mcron.CronExpr("0 0 9 * * *"), jobFunc)
+
+// 每周一上午9点执行
+cron.AddFunc("weekly-job", mcron.CronExpr("0 0 9 * * 1"), jobFunc)
+
+// 每月1号上午9点执行
+cron.AddFunc("monthly-job", mcron.CronExpr("0 0 9 1 * *"), jobFunc)
+
+
+========== 固定间隔 ==========
+
+// 每5秒执行一次
+cron.AddFunc("5s-job", mcron.Every(5*time.Second), jobFunc)
+
+// 每10分钟执行一次
+cron.AddFunc("10m-job", mcron.Every(10*time.Minute), jobFunc)
+
+// 每小时执行一次
+cron.AddFunc("1h-job", mcron.Every(time.Hour), jobFunc)
+
+
+========== 延迟执行 ==========
+
+// 10秒后执行，然后每小时执行一次
+cron.AddFunc("delayed-job",
+    mcron.Delay(10*time.Second, mcron.Every(time.Hour)),
+    jobFunc)
+
+
+========== 预定义调度 ==========
+
+cron.AddFunc("second-job", mcron.Predefined.EverySecond, jobFunc)
+cron.AddFunc("minute-job", mcron.Predefined.EveryMinute, jobFunc)
+cron.AddFunc("hour-job", mcron.Predefined.EveryHour, jobFunc)
+cron.AddFunc("daily-job", mcron.Predefined.EveryDay, jobFunc)
+cron.AddFunc("weekly-job", mcron.Predefined.EveryWeek, jobFunc)
+cron.AddFunc("monthly-job", mcron.Predefined.EveryMonth, jobFunc)
+
+
+========== 实现 Job 接口 ==========
+
+type MyJob struct {
+    name string
+}
+
+func (j *MyJob) Name() string {
+    return j.name
+}
+
+func (j *MyJob) Run(ctx context.Context) error {
+    fmt.Printf("Job %s is running\n", j.name)
+    // 执行业务逻辑
+    return nil
+}
+
+func main() {
+    cron := mcron.New()
+    cron.Start()
+    defer cron.Stop()
+
+    job := &MyJob{name: "my-job"}
+    cron.AddJob("my-job", mcron.Every(5*time.Second), job)
+
+    select {}
+}
+
+
+========== 任务管理 ==========
+
+func main() {
+    cron := mcron.New()
+    cron.Start()
+    defer cron.Stop()
+
+    // 添加任务
+    id, err := cron.AddFunc("removable-job", mcron.Every(time.Minute), func(ctx context.Context) error {
+        fmt.Println("This job will be removed")
+        return nil
+    })
+    if err != nil {
+        panic(err)
+    }
+
+    // 立即执行一次（阻塞）
+    err = cron.RunOnce(id)
+    if err != nil {
+        fmt.Printf("RunOnce failed: %v\n", err)
+    }
+
+    // 立即异步执行一次
+    cron.RunOnceAsync(id)
+
+    // 获取任务信息
+    entry := cron.GetEntry(id)
+    fmt.Printf("Job: %s, RunCount: %d, ErrorCount: %d\n",
+        entry.Name, entry.RunCount, entry.ErrorCount)
+
+    // 列出所有任务
+    entries := cron.ListEntries()
+    for _, e := range entries {
+        fmt.Printf("Job: %s, NextRun: %v\n", e.Name, e.NextRun)
+    }
+
+    // 移除任务
+    time.Sleep(5 * time.Second)
+    cron.Remove(id)
+}
+
+
+========== 错误处理和 Panic 恢复 ==========
+
+func main() {
+    cron := mcron.New()
+    cron.Start()
+    defer cron.Stop()
+
+    // 会 panic 的任务
+    cron.AddFunc("panic-job", mcron.Every(time.Second), func(ctx context.Context) error {
+        panic("intentional panic")
+    })
+
+    // 会返回错误的任务
+    cron.AddFunc("error-job", mcron.Every(time.Second), func(ctx context.Context) error {
+        return fmt.Errorf("something went wrong")
+    })
+
+    // 调度器会自动恢复 panic 并记录错误
+    // 查看日志：tail -f logs/app.log | grep "panic\|error"
+
+    select {}
+}
+
+
+========== 配置选项 ==========
+
+import (
+    "time"
+    "go.uber.org/zap"
+)
+
+func main() {
+    // 自定义时区
+    loc, _ := time.LoadLocation("Asia/Shanghai")
+
+    // 自定义日志
+    logger := zap.NewExample()
+
+    cron := mcron.New(
+        mcron.WithLocation(loc),
+        mcron.WithLogger(logger),
+    )
+
+    cron.Start()
+    defer cron.Stop()
+
+    select {}
+}
+
+
+========== 实际应用场景 ==========
+
+// 数据清理任务
+cron.AddFunc("data-cleanup", mcron.PredefinedSchedules.EveryDay, func(ctx context.Context) error {
+    // 清理过期数据
+    return cleanupExpiredData(ctx)
+})
+
+// 报表生成任务
+cron.AddFunc("report-generation", mcron.Cron("0 0 1 * * *"), func(ctx context.Context) error {
+    // 每天凌晨1点生成报表
+    return generateDailyReport(ctx)
+})
+
+// 缓存刷新任务
+cron.AddFunc("cache-refresh", mcron.Every(5*time.Minute), func(ctx context.Context) error {
+    // 每5分钟刷新缓存
+    return refreshCache(ctx)
+})
+
+// 健康检查任务
+cron.AddFunc("health-check", mcron.Every(30*time.Second), func(ctx context.Context) error {
+    // 每30秒检查系统健康状态
+    return checkSystemHealth(ctx)
+})
+
+// 数据同步任务
+cron.AddFunc("data-sync", mcron.Cron("0 */2 * * *"), func(ctx context.Context) error {
+    // 每2小时同步一次数据
+    return syncData(ctx)
+})
+
+
+========== 完整示例 ==========
+
+package main
+
+import (
+    "admin_server/component/mcron"
+    "admin_server/component/mlog"
+    "context"
+    "time"
+    "go.uber.org/zap"
+)
+
+func main() {
+    // 初始化日志
+    mlog.Init(&mlog.Config{
+        Level:   "info",
+        Format:  "console",
+        Console: true,
+    })
+
+    // 创建调度器
+    cron := mcron.New()
+    cron.Start()
+    defer cron.Stop()
+
+    // 1. 每分钟执行一次的心跳任务
+    cron.AddFunc("heartbeat", mcron.Every(time.Minute), func(ctx context.Context) error {
+        mlog.Info("Heartbeat check", zap.String("status", "alive"))
+        return nil
+    })
+
+    // 2. 每小时执行一次的数据备份
+    cron.AddFunc("data-backup", mcron.PredefinedSchedules.EveryHour, func(ctx context.Context) error {
+        mlog.Info("Starting data backup...")
+        // 执行备份逻辑
+        // ...
+        mlog.Info("Data backup completed")
+        return nil
+    })
+
+    // 3. 每天凌晨2点执行的数据清理
+    cron.AddFunc("data-cleanup", mcron.Cron("0 0 2 * * *"), func(ctx context.Context) error {
+        mlog.Info("Starting data cleanup...")
+        // 执行清理逻辑
+        // ...
+        mlog.Info("Data cleanup completed")
+        return nil
+    })
+
+    // 4. 每周一早上8点发送周报
+    cron.AddFunc("weekly-report", mcron.Cron("0 0 8 * * 1"), func(ctx context.Context) error {
+        mlog.Info("Sending weekly report...")
+        // 发送邮件逻辑
+        // ...
+        mlog.Info("Weekly report sent")
+        return nil
+    })
+
+    // 5. 延迟10秒后执行的一次性任务
+    cron.AddFunc("delayed-task",
+        mcron.Delay(10*time.Second, mcron.Every(time.Hour)),
+        func(ctx context.Context) error {
+            mlog.Info("Delayed task executed")
+            return nil
+        })
+
+    // 打印所有任务
+    entries := cron.ListEntries()
+    for _, entry := range entries {
+        mlog.Info("Scheduled job",
+            zap.String("name", entry.Name),
+            zap.Time("next_run", entry.NextRun),
+        )
+    }
+
+    // 保持运行
+    select {}
+}
+
+
+========== 注意事项 ==========
+
+1. 任务应该是幂等的，因为可能由于网络等原因导致重复执行
+2. 长时间运行的任务应该设置超时，避免阻塞调度器
+3. 使用 context 进行任务取消和超时控制
+4. 任务中的 panic 会被自动捕获并记录，不会影响其他任务
+5. 建议在应用关闭时调用 Stop() 优雅停止调度器
+6. 任务执行时间过长可能会影响下一次调度（对于固定间隔的任务）
+
+*/
