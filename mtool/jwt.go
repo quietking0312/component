@@ -31,16 +31,8 @@ func (j *JWT) Parse(token string, data jwt.Claims) (*JWT, error) {
 	if err != nil {
 		return nil, err
 	}
-	j.Claims = data
-	return j, nil
+	return &JWT{
+		key:   j.key,
+		Token: &jwt.Token{Claims: data},
+	}, nil
 }
-
-type JWTClaims struct {
-}
-
-func (c *JWTClaims) GetExpirationTime() (*jwt.NumericDate, error) { return nil, nil }
-func (c *JWTClaims) GetIssuedAt() (*jwt.NumericDate, error)       { return nil, nil }
-func (c *JWTClaims) GetNotBefore() (*jwt.NumericDate, error)      { return nil, nil }
-func (c *JWTClaims) GetIssuer() (string, error)                   { return "", nil }
-func (c *JWTClaims) GetSubject() (string, error)                  { return "", nil }
-func (c *JWTClaims) GetAudience() (jwt.ClaimStrings, error)       { return nil, nil }

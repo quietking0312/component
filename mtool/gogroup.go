@@ -44,6 +44,7 @@ func (g *GoGroup) Run(data TaskData, job Job) error {
 	// fileName, funName, line := runFuncName()
 	go func() {
 		defer func() {
+			<-g.c
 			if r := recover(); r != nil {
 				if g.panicFunc == nil {
 					fmt.Printf("%v\n", r)
@@ -62,7 +63,6 @@ func (g *GoGroup) Run(data TaskData, job Job) error {
 			}
 		}()
 		job(data)
-		<-g.c
 	}()
 	return nil
 }

@@ -1,4 +1,4 @@
-package mhash
+package mcyptos
 
 import (
 	"crypto/hmac"

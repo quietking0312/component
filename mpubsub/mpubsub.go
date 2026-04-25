@@ -39,15 +39,15 @@ func NewMPubSub[T any](channel []string, subFunc func(ctx context.Context, k str
 	if len(channel) == 0 {
 		return nil, fmt.Errorf("channel err")
 	}
-	ctx, chancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
 	m := &MPubSub[T]{
 		channel:  channel,
 		chanNext: make(chan string),
 		subFunc:  subFunc,
 		pubFunc:  pubFunc,
 		ctx:      ctx,
-		cancel:   chancel,
-		parser:   NewGobPaser(),
+		cancel:   cancel,
+		parser:   NewGobParser(),
 		logger:   _log,
 	}
 	for _, opt := range opts {
@@ -83,7 +83,7 @@ func (m *MPubSub[T]) Start() {
 		m.startChannel(k)
 	}
 	// 频道策略
-	go m.chanelStart()
+	go m.channelStart()
 	return
 }
 
@@ -169,7 +169,7 @@ func (m *MPubSub[T]) Publish(msg Message[T]) error {
 }
 
 // 消息发送
-func (m *MPubSub[T]) chanelStart() {
+func (m *MPubSub[T]) channelStart() {
 	for {
 		for _, v := range m.channel {
 			select {

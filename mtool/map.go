@@ -133,7 +133,7 @@ func (m *OrderedMap[K, V]) Keys() []K {
 	defer m.mu.RUnlock()
 	keys := make([]K, len(m.keys))
 	copy(keys, m.keys)
-	return m.keys
+	return keys
 }
 
 func (m *OrderedMap[K, V]) Length() int {

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"admin_server/component/mlog"
+	"github.com/quietking0312/component/mlog"
 	"go.uber.org/zap"
 )
 

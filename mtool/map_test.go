@@ -20,8 +20,8 @@ func TestNewMap(t *testing.T) {
 		}(i)
 	}
 	m.Wait()
-	a.Range(func(k int, v any) bool {
+	for _, k := range a.Keys() {
+		v, _ := a.Get(k)
 		fmt.Printf("%v, %v\n", k, v)
-		return true
-	})
+	}
 }

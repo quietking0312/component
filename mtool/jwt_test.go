@@ -8,23 +8,14 @@ import (
 
 type N struct {
 	Id int64
-	*JWTClaims
+	*jwt.RegisteredClaims
 }
 
 func TestJWT(t *testing.T) {
-	//var data = struct {
-	//	*jwt.RegisteredClaims
-	//}{
-	//	&jwt.RegisteredClaims{
-	//		ID:      "1",
-	//		Issuer:  "server",
-	//		Subject: "username",
-	//	},
-	//}
 	j := NewJWT([]byte("battle"), jwt.SigningMethodHS256)
 	j.SetData(&N{
-		Id:        1,
-		JWTClaims: new(JWTClaims),
+		Id:               1,
+		RegisteredClaims: &jwt.RegisteredClaims{},
 	})
 	token, err := j.SignedString()
 	if err != nil {
@@ -34,7 +25,7 @@ func TestJWT(t *testing.T) {
 
 	j2 := NewJWT([]byte("battle"), jwt.SigningMethodHS256)
 	var tokenData = &N{
-		JWTClaims: new(JWTClaims),
+		RegisteredClaims: &jwt.RegisteredClaims{},
 	}
 	j2, err = j2.Parse(token, tokenData)
 	if err != nil {

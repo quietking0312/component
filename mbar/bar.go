@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // https://github.com/qianlnk/pgbar/blob/master/bar.go
@@ -25,6 +26,7 @@ type Bar struct {
 	before    int
 	BarRender *BarRender // 进度条渲染方式
 	speedUnit func(speed float64) (float64, string)
+	closeOnce sync.Once
 }
 
 type BarRender struct {
@@ -42,6 +44,9 @@ func (b *BarRender) initBarRender(width int) {
 }
 
 func NewBar(total int) *Bar {
+	if total <= 0 {
+		panic("mbar: total must be greater than 0")
+	}
 	bar := &Bar{
 		prefix:   "",
 		total:    total,
@@ -49,7 +54,7 @@ func NewBar(total int) *Bar {
 		advance:  make(chan bool),
 		done:     make(chan bool),
 		currents: make(map[string]int),
-		current:  1,
+		current:  0,
 		BarRender: &BarRender{
 			fast: 20,
 			slow: 5,
@@ -77,7 +82,10 @@ func NewBar(total int) *Bar {
 
 func (b *Bar) Add(n ...int) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	if b.closed {
+		b.mu.Unlock()
+		return
+	}
 	step := 1
 	if len(n) > 0 {
 		step = n[0]
@@ -86,25 +94,41 @@ func (b *Bar) Add(n ...int) {
 	lastRate := b.rate
 	lastSpeed := b.speed
 	b.count()
-	if lastRate != b.rate || lastSpeed != b.speed {
-		b.advance <- true
+	needAdvance := lastRate != b.rate || lastSpeed != b.speed
+	isDone := b.total-b.current <= 0
+	b.mu.Unlock()
+
+	if needAdvance {
+		select {
+		case b.advance <- true:
+		default:
+		}
 	}
-	if b.total-b.current <= 0 && !b.closed {
-		b.closed = true
-		b.advance <- false
-		close(b.done)
-		close(b.advance)
+	if isDone {
+		b.closeOnce.Do(func() {
+			b.mu.Lock()
+			b.closed = true
+			b.mu.Unlock()
+			close(b.done)
+			select {
+			case b.advance <- false:
+			default:
+			}
+			close(b.advance)
+		})
 	}
 }
 
 func (b *Bar) Closed() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	return b.closed
 }
 
 func (b *Bar) count() {
 	now := time.Now()
-	nowKey := now.Format("2006102150405")
-	befKey := now.Add(time.Minute * -1).Format("2006102150405")
+	nowKey := now.Format("20060102150405")
+	befKey := now.Add(time.Minute * -1).Format("20060102150405")
 	b.currents[nowKey] = b.current
 	if v, ok := b.currents[befKey]; ok {
 		b.before = v
@@ -125,14 +149,23 @@ func (b *Bar) count() {
 }
 
 func (b *Bar) updateCost() {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
 	for {
 		select {
-		case <-time.After(time.Second):
-			b.cost++
+		case <-ticker.C:
 			b.mu.Lock()
+			if b.closed {
+				b.mu.Unlock()
+				return
+			}
+			b.cost++
 			b.count()
 			b.mu.Unlock()
-			b.advance <- true
+			select {
+			case b.advance <- true:
+			default:
+			}
 		case <-b.done:
 			return
 		}
@@ -160,25 +193,43 @@ func (b *Bar) barMsg() string {
 	cost := (time.Duration(b.cost) * time.Second).String()
 	estimate := (time.Duration(b.estimate) * time.Second).String()
 	ct := fmt.Sprintf(" (%d/%d)", b.current, b.total)
-	barLen := b.width - len(prefix) - len(rate) - len(speed) - len(cost) - len(estimate) - len(ct) - 10
+	barLen := b.width - utf8.RuneCountInString(prefix) - len(rate) - len(speed) - len(cost) - len(estimate) - len(ct) - 10
+	if barLen < 0 {
+		barLen = 0
+	}
 	bar1len := barLen * b.rate / 100
+	if bar1len < 0 {
+		bar1len = 0
+	}
 	bar2len := barLen - bar1len
+	if bar2len < 0 {
+		bar2len = 0
+	}
 
-	realBar1 := b.BarRender.bar1[:bar1len]
+	realBar1Len := bar1len
+	if realBar1Len > len(b.BarRender.bar1) {
+		realBar1Len = len(b.BarRender.bar1)
+	}
+	realBar1 := b.BarRender.bar1[:realBar1Len]
 	var realBar2 string
 	if bar2len > 0 {
-		realBar2 = ">" + b.BarRender.bar2[:bar2len-1]
+		realBar2Len := bar2len
+		if realBar2Len > len(b.BarRender.bar2)+1 {
+			realBar2Len = len(b.BarRender.bar2) + 1
+		}
+		if realBar2Len > 1 {
+			realBar2 = ">" + b.BarRender.bar2[:realBar2Len-1]
+		} else if realBar2Len == 1 {
+			realBar2 = ">"
+		}
 	}
 	msg := fmt.Sprintf(`%s %s%s [%s%s] %s %s in: %s`, prefix, rate, ct, realBar1, realBar2, speed, cost, estimate)
 	switch {
 	case b.speed <= b.BarRender.slow*100:
-		//return "\033[0;31m" + msg + "\033[0m"
 		return msg
 	case b.speed > b.BarRender.slow*100 && b.speed < b.BarRender.fast*100:
-		//return "\033[0;33m" + msg + "\033[0m"
 		return msg
 	default:
-		//return "\033[0;32m" + msg + "\033[0m"
 		return msg
 	}
 }

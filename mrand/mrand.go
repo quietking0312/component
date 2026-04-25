@@ -28,7 +28,7 @@ func NewSource(seed int64, cacheSize uint32) *MSource {
 	s := &MSource{
 		source:    rand.NewSource(seed),
 		cache:     make([]int64, cacheSize),
-		closeChan: make(chan struct{}),
+		closeChan: make(chan struct{}, 1),
 		size:      cacheSize,
 	}
 	for i := 0; i < int(cacheSize/2); i++ {
@@ -75,7 +75,10 @@ func (m *MSource) Int63() int64 {
 }
 
 func (m *MSource) Seed(seed int64) {
-	m.closeChan <- struct{}{}
+	select {
+	case m.closeChan <- struct{}{}:
+	default:
+	}
 	m.source.Seed(seed)
 	atomic.StoreUint32(&m.head, 0)
 	atomic.StoreUint32(&m.tail, 0)

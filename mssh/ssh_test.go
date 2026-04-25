@@ -14,7 +14,7 @@ func TestCli_Connect(t *testing.T) {
 		Pwd:  "",
 		Addr: "",
 	}
-	if _, err := cli.Connect(); err != nil {
+	if err := cli.Connect(); err != nil {
 		t.Fatal(err)
 	}
 	result, err := cli.Run("ls -l")
@@ -43,7 +43,7 @@ func TestCli_UploadFileAndProgress(t *testing.T) {
 		Pwd:  "#nmp3?c;G+L!Wy2R",
 		Addr: "152.136.171.104:22",
 	}
-	if _, err := cli.Connect(); err != nil {
+	if err := cli.Connect(); err != nil {
 		t.Fatal(err)
 	}
 	defer cli.client.Close()

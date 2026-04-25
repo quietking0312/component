@@ -92,6 +92,11 @@ func (ecli *EmailClient) Dial() (gomail.SendCloser, error) {
 }
 
 func (ecli *EmailClient) Send(from string, to []string, msg io.WriterTo) error {
+	if ecli.c == nil {
+		if _, err := ecli.Dial(); err != nil {
+			return err
+		}
+	}
 	if err := ecli.c.Mail(from); err != nil {
 		if err == io.EOF {
 			// This is probably due to a timeout, so reconnect and try again.
@@ -136,6 +141,8 @@ func (ecli *EmailClient) GoRun() {
 	var s gomail.SendCloser
 	var err error
 	open := false
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
 	for {
 		select {
 		case m, ok := <-ecli.MsgCh:
@@ -144,26 +151,27 @@ func (ecli *EmailClient) GoRun() {
 			}
 			if !open {
 				if s, err = ecli.Dial(); err != nil {
-					goto CALLBACK
+					if m.FC != nil {
+						m.FC(m.Msg, err)
+					}
+					continue
 				}
 				open = true
 			}
-			err = gomail.Send(s, m.Msg)
-			if err != nil {
-				goto CALLBACK
-			}
-		CALLBACK:
-			if m.FC != nil {
-				m.FC(m.Msg, err)
-			}
-		case <-time.After(20 * time.Second):
-			if open {
-				if err := s.Close(); err != nil {
-					panic(err)
+			if err = gomail.Send(s, m.Msg); err != nil {
+				if m.FC != nil {
+					m.FC(m.Msg, err)
 				}
+				continue
+			}
+			if m.FC != nil {
+				m.FC(m.Msg, nil)
+			}
+		case <-ticker.C:
+			if open {
+				_ = s.Close()
 				open = false
 			}
-
 		}
 	}
 }

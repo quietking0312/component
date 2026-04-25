@@ -94,7 +94,11 @@ func (p *BOSProvider) Upload(ctx context.Context, key string, reader io.Reader, 
 
 	// 构建文件 URL
 	scheme := "https"
-	urlStr := fmt.Sprintf("%s://%s.%s/%s", scheme, p.bucket, p.config.Endpoint, key)
+	endpoint := p.config.Endpoint
+	if schemeIdx := strings.Index(endpoint, "://"); schemeIdx != -1 {
+		endpoint = endpoint[schemeIdx+3:]
+	}
+	urlStr := fmt.Sprintf("%s://%s.%s/%s", scheme, p.bucket, endpoint, key)
 
 	return &UploadResult{
 		URL:         urlStr,

@@ -5,6 +5,7 @@ import (
 	"golang.org/x/sys/windows"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -78,7 +79,7 @@ func getProcessesLinux() ([]Process, error) {
 		processes = append(processes, Process{
 			Pid:     pid,
 			Name:    name,
-			Cmdline: strings.TrimSpace(string(cmdlineData)),
+			Cmdline: strings.ReplaceAll(strings.TrimSpace(string(cmdlineData)), "\x00", " "),
 		})
 	}
 
@@ -95,15 +96,14 @@ func getNameFromStatus(data []byte) string {
 }
 
 func getProcesses() ([]Process, error) {
-	switch os.Getenv("GOOS") {
+	switch runtime.GOOS {
 	case "windows":
 		return getProcessesWindow()
 	case "linux", "darwin":
 		return getProcessesLinux()
 	default:
-		return nil, fmt.Errorf("unsupported os")
+		return nil, fmt.Errorf("unsupported os: %s", runtime.GOOS)
 	}
-
 }
 
 //func readProcessMemory(pid int, addr uintptr, buf []byte) (int, error) {
@@ -119,13 +119,6 @@ func getProcesses() ([]Process, error) {
 //	return 0, nil
 //}
 
-func GetProcess() {
-	process, err := getProcesses()
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	for _, p := range process {
-		fmt.Println(p.Pid, p.Name, p.Cmdline)
-	}
+func GetProcesses() ([]Process, error) {
+	return getProcesses()
 }

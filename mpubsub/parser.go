@@ -10,7 +10,7 @@ type GobParser struct {
 	bufferPool sync.Pool
 }
 
-func NewGobPaser() *GobParser {
+func NewGobParser() *GobParser {
 	return &GobParser{
 		bufferPool: sync.Pool{
 			New: func() any {

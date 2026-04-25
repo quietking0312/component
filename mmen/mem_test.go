@@ -1,7 +1,14 @@
 package mmen
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
-func TestGetProcess(t *testing.T) {
-	GetProcess()
+func TestGetProcesses(t *testing.T) {
+	a, err := GetProcesses()
+	if err != nil {
+		t.Log(err)
+	}
+	fmt.Println(a)
 }

@@ -37,16 +37,6 @@ type Cache struct {
 
 	// 刷新状态
 	flushing int32
-
-	// 写入队列（用于异步写入工作池）
-	writeCh chan *writeTask
-}
-
-// writeTask 写入任务
-type writeTask struct {
-	ctx     context.Context
-	entries []Entity
-	done    chan error
 }
 
 // New 创建缓存
@@ -70,19 +60,12 @@ func New(store DBStore, opts ...Option) (*Cache, error) {
 		l2DirtyMap:  make(map[string]bool),
 		stopCh:      make(chan struct{}),
 		flushCh:     make(chan struct{}, 1),
-		writeCh:     make(chan *writeTask, 100),
 	}
 
 	// 启动后台协程
 	if config.FlushMode == FlushModeInterval {
 		c.wg.Add(1)
 		go c.flushLoop()
-	}
-
-	// 启动写入工作协程
-	for i := 0; i < config.WriteWorkers; i++ {
-		c.wg.Add(1)
-		go c.writeWorker()
 	}
 
 	// 启动清理协程
@@ -142,7 +125,7 @@ func (c *Cache) Get(key string) (Entity, error) {
 
 	atomic.AddInt64(&c.stats.DBReads, 1)
 
-	return entity, nil
+	return entity.Copy(), nil
 }
 
 // MGet 批量获取
@@ -387,18 +370,17 @@ func (c *Cache) deleteWriteThrough(key string) error {
 // addDirty 添加到脏队列
 func (c *Cache) addDirty(key string) {
 	c.dirtyMu.Lock()
-	defer c.dirtyMu.Unlock()
 
 	if !c.dirtyMap[key] {
 		c.dirtyMap[key] = true
 		c.dirtyKeys = append(c.dirtyKeys, key)
 	}
 
-	// 检查是否达到批量大小
-	if len(c.dirtyKeys) >= c.config.BatchSize {
-		c.dirtyMu.Unlock()
+	needFlush := len(c.dirtyKeys) >= c.config.BatchSize
+	c.dirtyMu.Unlock()
+
+	if needFlush {
 		c.triggerFlush()
-		c.dirtyMu.Lock()
 	}
 }
 
@@ -617,24 +599,6 @@ func (c *Cache) flushLoop() {
 	}
 }
 
-// writeWorker 写入工作协程（用于处理 writeCh 中的任务）
-func (c *Cache) writeWorker() {
-	defer c.wg.Done()
-
-	for {
-		select {
-		case task := <-c.writeCh:
-			// 处理写入任务
-			err := c.doFlush()
-			if task.done != nil {
-				task.done <- err
-			}
-		case <-c.stopCh:
-			return
-		}
-	}
-}
-
 // cleanupLoop 清理协程
 func (c *Cache) cleanupLoop() {
 	defer c.wg.Done()
@@ -731,9 +695,6 @@ func (c *Cache) Close() error {
 
 	// 等待所有协程完成
 	c.wg.Wait()
-
-	// 最后一次刷新
-	c.doFlush()
 
 	// 关闭存储
 	if c.store != nil {

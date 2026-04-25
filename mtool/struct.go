@@ -51,7 +51,7 @@ func CopyStruct2(src any, dst any, opts ...Options) error {
 				isOK := false
 				if len(opts) > 0 {
 					for _, o := range opts {
-						isOK = o(srcType.Field(i), dstType.Elem().Field(j))
+						isOK = isOK || o(srcType.Field(i), dstType.Elem().Field(j))
 					}
 				} else {
 					isOK = srcType.Field(i).Name == dstType.Elem().Field(j).Name && srcField.Type() == dstField.Type()
@@ -98,7 +98,7 @@ func GetFieldsTagValueMap(v any, opts ...func(opt *Opt)) map[string]any {
 	return ret
 }
 
-func GetFilesTag(v any, opts ...func(opt *Opt)) []string {
+func GetFieldTags(v any, opts ...func(opt *Opt)) []string {
 	opt := &Opt{
 		Tag: "json",
 	}

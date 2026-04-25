@@ -107,14 +107,15 @@ func (skipList *SkipList[K, V]) Remove(key K) {
 	}
 
 	for i, v := range update {
-		if v == skipList.head {
-			skipList.level--
-		}
 		v.next[i] = v.next[i].next[i]
+	}
+	// 调整 level：如果最高层为空，则降低 level
+	for skipList.level > 1 && skipList.head.next[skipList.level-1] == nil {
+		skipList.level--
 	}
 }
 
-func (skipList *SkipList[K, V]) Search(key K) (any, bool) {
+func (skipList *SkipList[K, V]) Search(key K) (V, bool) {
 	node := skipList.head
 	for i := skipList.level - 1; i >= 0; i-- {
 		for {
@@ -134,7 +135,8 @@ func (skipList *SkipList[K, V]) Search(key K) (any, bool) {
 			}
 		}
 	}
-	return nil, false
+	var zero V
+	return zero, false
 }
 
 func (skipList *SkipList[K, V]) PrintSkipList() {

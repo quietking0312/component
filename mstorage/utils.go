@@ -3,12 +3,13 @@ package mstorage
 import (
 	"bytes"
 	"crypto/md5"
+	"crypto/rand"
 	"encoding/hex"
 	"io"
+	"math/big"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 )
 
@@ -208,16 +209,15 @@ func sanitizeFilename(name string) string {
 func generateRandomString(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	result := make([]byte, length)
-
-	// 使用纳秒时间戳 + 原子计数器作为种子
-	counter := atomic.AddInt64(&randomCounter, 1)
-	seed := time.Now().UnixNano() + counter
-
+	max := big.NewInt(int64(len(charset)))
 	for i := range result {
-		seed = (seed*1103515245 + 12345) & 0x7fffffff
-		result[i] = charset[seed%int64(len(charset))]
+		n, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			result[i] = charset[i%len(charset)]
+			continue
+		}
+		result[i] = charset[n.Int64()]
 	}
-
 	return string(result)
 }
 

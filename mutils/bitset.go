@@ -1,4 +1,4 @@
-package utils
+package mutils
 
 import (
 	"math/bits"
@@ -18,23 +18,35 @@ func NewBitSet64(size int) *BitSet64 {
 }
 
 func (b *BitSet64) Set(n int) {
+	if n < 0 || n >= b.size {
+		panic("bitset: index out of range")
+	}
 	b.bits[n/64] |= 1 << (n % 64)
 }
 
 func (b *BitSet64) Clear(n int) {
+	if n < 0 || n >= b.size {
+		panic("bitset: index out of range")
+	}
 	b.bits[n/64] &^= 1 << (n % 64)
 }
 
 func (b *BitSet64) Get(n int) bool {
+	if n < 0 || n >= b.size {
+		panic("bitset: index out of range")
+	}
 	return b.bits[n/64]&(1<<(n%64)) != 0
 }
 
 func (b *BitSet64) Toggle(n int) {
+	if n < 0 || n >= b.size {
+		panic("bitset: index out of range")
+	}
 	b.bits[n/64] ^= 1 << (n % 64)
 }
 
 // 查找最小的false
-func (b *BitSet64) FindFirstFalseFest() int {
+func (b *BitSet64) FindFirstFalseFast() int {
 	for i := 0; i < len(b.bits); i++ {
 		inverted := ^b.bits[i]
 		if inverted != 0 {

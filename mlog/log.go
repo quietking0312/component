@@ -95,6 +95,9 @@ func Init(cfg *Config) error {
 	}
 
 	// 创建 logger
+	if len(cores) == 0 {
+		cores = append(cores, zapcore.NewNopCore())
+	}
 	core := zapcore.NewTee(cores...)
 	logger = zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1), zap.AddStacktrace(zapcore.ErrorLevel))
 	sugarLogger = logger.Sugar()

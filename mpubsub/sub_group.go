@@ -187,9 +187,6 @@ func (c *SubGroup[T]) Write(m T) error {
 	if c.closed.Load() {
 		return fmt.Errorf("groupClosed: %v", c.id)
 	}
-	if len(c.msgChan) >= cap(c.msgChan) {
-		return nil
-	}
 	select {
 	case c.msgChan <- m:
 		return nil
@@ -282,7 +279,7 @@ func (c *SubGroup[T]) batchDistribute(
 func (c *SubGroup[T]) writeToSubscriber(writer HandlerIface[T], msg T) {
 	var lastErr error
 	for i := 0; i < c.config.RetryCount; i++ {
-		if i > 1 {
+		if i > 0 {
 			time.Sleep(c.config.RetryDelay)
 		}
 		if err := writer.Write(msg); err != nil {

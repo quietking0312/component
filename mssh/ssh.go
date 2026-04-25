@@ -5,7 +5,6 @@ import (
 	"github.com/pkg/sftp"
 	gossh "golang.org/x/crypto/ssh"
 	"io"
-	"io/ioutil"
 	"net"
 	"os"
 	"path"
@@ -25,7 +24,7 @@ type Cli struct {
 
 func (c *Cli) GetAuth() ([]gossh.AuthMethod, error) {
 	if c.keyPath != "" {
-		key, err := ioutil.ReadFile(c.keyPath)
+		key, err := os.ReadFile(c.keyPath)
 		if err != nil {
 			return nil, err
 		}
@@ -47,13 +46,13 @@ func (c *Cli) GetAuth() ([]gossh.AuthMethod, error) {
 	}
 }
 
-func (c *Cli) Connect() (*Cli, error) {
+func (c *Cli) Connect() error {
 	config := &gossh.ClientConfig{}
 	config.SetDefaults()
 	config.User = c.User
 	auth, err := c.GetAuth()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	config.Auth = auth
 	config.HostKeyCallback = func(hostname string, remote net.Addr, key gossh.PublicKey) error {
@@ -61,19 +60,22 @@ func (c *Cli) Connect() (*Cli, error) {
 	}
 	client, err := gossh.Dial("tcp", c.Addr, config)
 	if err != nil {
-		return c, err
+		return err
 	}
 	c.client = client
-	return c, err
+	return nil
 }
 
 func (c *Cli) Close() error {
+	if c.client == nil {
+		return nil
+	}
 	return c.client.Close()
 }
 
-func (c Cli) Run(command string) (string, error) {
+func (c *Cli) Run(command string) (string, error) {
 	if c.client == nil {
-		if _, err := c.Connect(); err != nil {
+		if err := c.Connect(); err != nil {
 			return "", err
 		}
 	}
@@ -87,7 +89,7 @@ func (c Cli) Run(command string) (string, error) {
 	return c.LastResult, err
 }
 
-func (c Cli) UploadFile(localFilePath string, remotePath string) error {
+func (c *Cli) UploadFile(localFilePath string, remotePath string) error {
 	ftpClient, err := sftp.NewClient(c.client,
 		sftp.UseConcurrentWrites(true),
 		sftp.MaxPacketUnchecked(1<<16))
@@ -116,7 +118,7 @@ func (c Cli) UploadFile(localFilePath string, remotePath string) error {
 	return nil
 }
 
-func (c Cli) UploadFileAndProgress(srcFile io.Reader, remoteFile string, ch chan<- int64) (err error) {
+func (c *Cli) UploadFileAndProgress(srcFile io.Reader, remoteFile string, ch chan<- int64) error {
 	ftpClient, err := sftp.NewClient(c.client,
 		sftp.UseConcurrentWrites(true),
 		sftp.MaxPacketUnchecked(1<<16))
@@ -130,21 +132,16 @@ func (c Cli) UploadFileAndProgress(srcFile io.Reader, remoteFile string, ch chan
 		return err
 	}
 	defer dstFile.Close()
-	var done = make(chan bool)
+
+	errCh := make(chan error, 1)
 	go func() {
-		defer func() {
-			time.Sleep(3 * time.Second)
-			done <- true
-		}()
-		if _, e := dstFile.ReadFrom(srcFile); e != nil {
-			fmt.Println(e)
-			err = e
-			return
-		}
+		_, e := dstFile.ReadFrom(srcFile)
+		errCh <- e
 	}()
+
 	t := time.NewTicker(1 * time.Second)
-	lastSize := int64(0)
 	defer t.Stop()
+	lastSize := int64(0)
 	for {
 		select {
 		case <-t.C:
@@ -158,39 +155,10 @@ func (c Cli) UploadFileAndProgress(srcFile io.Reader, remoteFile string, ch chan
 			if diff != 0 {
 				ch <- diff
 			}
-		case <-done:
-			return err
+		case e := <-errCh:
+			return e
 		}
 	}
-	//buf := make([]byte, 1<<15) // 每个数据包最大支持32kb
-	//var (
-	//	count        = 0
-	//	latest int64 = 0
-	//)
-	//for {
-	//	n, err := srcFile.Read(buf)
-	//	if err != nil {
-	//		if err != io.EOF {
-	//			fmt.Println(err)
-	//			return err
-	//		} else {
-	//			break
-	//		}
-	//	}
-	//	size, _ := dstFile.Write(buf[:n])
-	//	//fmt.Println(size)
-	//	//ds, _ := dstFile.Stat()
-	//	count += size
-	//	t := time.Now().Unix()
-	//	if t-latest >= 1 {
-	//		ch <- int64(count)
-	//		count = 0
-	//	}
-	//}
-	//if count > 0 {
-	//	ch <- int64(count)
-	//}
-	//return nil
 }
 
 func (c *Cli) DownloadFile(remotePath string, localDir string, localFileName string) error {

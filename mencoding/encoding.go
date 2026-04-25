@@ -28,22 +28,6 @@ func Byte2Utf8(data []byte) ([]byte, error) {
 	}
 }
 
-// DetermineEncoding 检测编码
-//func DetermineEncoding(r *bufio.Reader) encoding.Encoding {
-//	b, err := r.Peek(1024)
-//	if err != nil && err.Error() != "EOF" {
-//		return unicode.UTF8
-//	}
-//	e, name, _ := charset.DetermineEncoding(b, "")
-//	fmt.Println(name)
-//	for _, se := range simplifiedchinese.All {
-//		if e == se {
-//
-//		}
-//	}
-//	return e
-//}
-
 func GetStrCoding(data []byte) string {
 	if isUtf8(data) {
 		return UTF8
@@ -59,14 +43,15 @@ func isGBK(data []byte) bool {
 		if data[i] <= 0x7f { // 编码0-127
 			i++
 			continue
-		} else {
-			if data[i] >= 0x81 && data[i] <= 0xfe && data[i+1] >= 0x40 && data[i+1] <= 0xfe && data[i+1] != 0xf7 {
-				i += 2
-				continue
-			} else {
-				return false
-			}
 		}
+		if i+1 >= len(data) {
+			return false
+		}
+		if data[i] >= 0x81 && data[i] <= 0xfe && data[i+1] >= 0x40 && data[i+1] <= 0xfe && data[i+1] != 0xf7 {
+			i += 2
+			continue
+		}
+		return false
 	}
 	return true
 }
@@ -90,16 +75,17 @@ func isUtf8(data []byte) bool {
 		if (data[i] & 0x80) == 0x00 {
 			i++
 			continue
-		} else if num := preNum(data[i]); num > 2 {
-			i++
-			for j := 0; j < num-1; j++ {
-				if (data[i] & 0xc0) != 0x80 {
-					return false
-				}
-				i++
-			}
-		} else {
+		}
+		num := preNum(data[i])
+		if num < 2 || num > 4 {
 			return false
+		}
+		i++
+		for j := 0; j < num-1; j++ {
+			if i >= len(data) || (data[i]&0xc0) != 0x80 {
+				return false
+			}
+			i++
 		}
 	}
 	return true

@@ -14,9 +14,9 @@ func defaultRedisOption() *redis.Options {
 		Username:        "",
 		Password:        "",
 		DB:              0,
-		MaxRetries:      3,                // 最大重试测试； -1 禁用重试
-		MinRetryBackoff: time.Duration(8), // 重试直接的最小
-		MaxRetryBackoff: time.Duration(512),
+		MaxRetries:      3,                    // 最大重试测试； -1 禁用重试
+		MinRetryBackoff: 8 * time.Millisecond, // 重试间隔最小值
+		MaxRetryBackoff: 512 * time.Millisecond,
 		// 新连接超时时间
 		DialTimeout: 5 * time.Second,
 		// 读取超时

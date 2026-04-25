@@ -4,7 +4,7 @@
 package msock
 
 import (
-	"admin_server/component/mlog"
+	"github.com/quietking0312/component/mlog"
 )
 
 // MLogLogger 使用 mlog 的日志实现

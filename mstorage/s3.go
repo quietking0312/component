@@ -74,32 +74,20 @@ func NewS3Provider(s3Config S3Config) (*S3Provider, error) {
 		)
 	}
 
-	// 如果有自定义 endpoint（如 MinIO）
-	if s3Config.Endpoint != "" {
-		cfg, err = config.LoadDefaultConfig(context.Background(),
-			config.WithRegion(s3Config.Region),
-			config.WithCredentialsProvider(creds),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("s3: load config failed: %w", err)
-		}
-	} else {
-		cfg, err = config.LoadDefaultConfig(context.Background(),
-			config.WithRegion(s3Config.Region),
-			config.WithCredentialsProvider(creds),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("s3: load config failed: %w", err)
-		}
+	// 加载 AWS 配置
+	cfg, err = config.LoadDefaultConfig(context.Background(),
+		config.WithRegion(s3Config.Region),
+		config.WithCredentialsProvider(creds),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("s3: load config failed: %w", err)
 	}
 
 	// 创建 S3 客户端
 	var client *s3.Client
 	if s3Config.Endpoint != "" {
 		client = s3.NewFromConfig(cfg, func(o *s3.Options) {
-			if s3Config.Endpoint != "" {
-				o.BaseEndpoint = aws.String(s3Config.Endpoint)
-			}
+			o.BaseEndpoint = aws.String(s3Config.Endpoint)
 			o.UsePathStyle = s3Config.UsePathStyle
 		})
 	} else {

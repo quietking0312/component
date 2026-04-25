@@ -4,8 +4,8 @@ import (
 	"math"
 )
 
-// 求 1 / 平方根 x
-func mRSqrt(x float32) float32 {
+// RSqrt 求 1 / 平方根 x (快速逆平方根)
+func RSqrt(x float32) float32 {
 	x2 := x
 	i := math.Float32bits(x)
 	i = 0x5f3759df - (i >> 1)
@@ -14,10 +14,16 @@ func mRSqrt(x float32) float32 {
 	return x2
 }
 
-// 牛顿求平方根
-func mSqrt(x float64) float64 {
+// Sqrt 牛顿求平方根
+func Sqrt(x float64) float64 {
+	if x < 0 {
+		return math.NaN()
+	}
+	if x == 0 {
+		return 0
+	}
 	x2 := x
-	for (x2*x2 - x) > 0.00001 { // 精度
+	for math.Abs(x2*x2-x) > 0.00001 { // 精度
 		x2 = (x2 + x/x2) / 2
 	}
 	return x2
