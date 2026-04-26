@@ -1,10 +1,10 @@
 package mrpc
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/golang/protobuf/proto"
-	"github.com/quietking0312/component/mcyptos"
 	pb "github.com/quietking0312/component/mrpc/proto"
 	"testing"
 	"time"
@@ -54,7 +54,7 @@ func Test_PROTO(t *testing.T) {
 	}
 	d := map[string]interface{}{
 		"code": 0,
-		"data": mcyptos.EncodeBase64(dataBytes),
+		"data": base64.StdEncoding.EncodeToString(dataBytes),
 	}
 	dBytes, err := json.Marshal(d)
 	if err != nil {
@@ -68,7 +68,7 @@ func Test_PROTO(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		d0DataBytes, err := mcyptos.DecodeBase64(d0["data"].(string))
+		d0DataBytes, err := base64.StdEncoding.DecodeString(d0["data"].(string))
 		if err != nil {
 			t.Fatal(err)
 		}

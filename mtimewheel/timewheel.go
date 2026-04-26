@@ -10,11 +10,16 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/quietking0312/component/mlog"
-
-	"go.uber.org/zap"
 )
+
+// Logger 日志接口，用于解耦对具体日志库的依赖。
+// 使用者可传入 zap.SugaredLogger、logrus、标准库 log 或自定义实现。
+type Logger interface {
+	Debug(msg string, keysAndValues ...any)
+	Info(msg string, keysAndValues ...any)
+	Warn(msg string, keysAndValues ...any)
+	Error(msg string, keysAndValues ...any)
+}
 
 // Task 延迟任务
 type Task struct {
@@ -72,6 +77,9 @@ type TimeWheel struct {
 	taskCount int64
 	// executedCount 已执行任务计数
 	executedCount int64
+	// logger 为可选的日志记录器，通过 Option 注入。
+	// 使用 Logger 接口而非 *zap.Logger，以解除对任何具体日志库的耦合。
+	logger Logger
 }
 
 // Options 配置选项
@@ -80,6 +88,9 @@ type Options struct {
 	Tick time.Duration
 	// WheelSize 时间轮大小，默认 100
 	WheelSize int
+	// Logger 为可选的日志记录器，通过 WithLogger 注入。
+	// 使用 Logger 接口而非 *zap.Logger，以解除对任何具体日志库的耦合。
+	Logger Logger
 }
 
 // Option 配置函数
@@ -96,6 +107,14 @@ func WithTick(tick time.Duration) Option {
 func WithWheelSize(size int) Option {
 	return func(o *Options) {
 		o.WheelSize = size
+	}
+}
+
+// WithLogger 设置日志记录器。
+// 通过 Logger 接口注入，不绑定具体日志库（如 zap、logrus 等）。
+func WithLogger(logger Logger) Option {
+	return func(o *Options) {
+		o.Logger = logger
 	}
 }
 
@@ -122,6 +141,7 @@ func New(opts ...Option) *TimeWheel {
 		stopChan:       make(chan struct{}),
 		ctx:            ctx,
 		cancel:         cancel,
+		logger:         options.Logger,
 	}
 
 	// 初始化槽位
@@ -130,6 +150,38 @@ func New(opts ...Option) *TimeWheel {
 	}
 
 	return tw
+}
+
+// logInfo 安全地记录 Info 级别日志。
+// 如果 logger 为 nil（未注入），则跳过日志记录，避免 panic。
+func (tw *TimeWheel) logInfo(msg string, keysAndValues ...any) {
+	if tw.logger != nil {
+		tw.logger.Info(msg, keysAndValues...)
+	}
+}
+
+// logDebug 安全地记录 Debug 级别日志。
+// 如果 logger 为 nil（未注入），则跳过日志记录，避免 panic。
+func (tw *TimeWheel) logDebug(msg string, keysAndValues ...any) {
+	if tw.logger != nil {
+		tw.logger.Debug(msg, keysAndValues...)
+	}
+}
+
+// logError 安全地记录 Error 级别日志。
+// 如果 logger 为 nil（未注入），则跳过日志记录，避免 panic。
+func (tw *TimeWheel) logError(msg string, keysAndValues ...any) {
+	if tw.logger != nil {
+		tw.logger.Error(msg, keysAndValues...)
+	}
+}
+
+// logInfo 安全地记录 Info 级别日志。
+// 如果 logger 为 nil（未注入），则跳过日志记录，避免 panic。
+func (htw *HierarchicalTimeWheel) logInfo(msg string, keysAndValues ...any) {
+	if htw.logger != nil {
+		htw.logger.Info(msg, keysAndValues...)
+	}
 }
 
 // Start 启动时间轮
@@ -143,9 +195,9 @@ func (tw *TimeWheel) Start() {
 	tw.wg.Add(1)
 	go tw.run()
 
-	mlog.Info("time wheel started",
-		zap.Duration("tick", tw.tick),
-		zap.Int("wheel_size", tw.wheelSize),
+	tw.logInfo("time wheel started",
+		"tick", tw.tick,
+		"wheel_size", tw.wheelSize,
 	)
 }
 
@@ -169,9 +221,9 @@ func (tw *TimeWheel) Stop() {
 	tw.taskMap = make(map[string]*Task)
 	tw.mu.Unlock()
 
-	mlog.Info("time wheel stopped",
-		zap.Int64("total_tasks", tw.taskCount),
-		zap.Int64("executed_tasks", tw.executedCount),
+	tw.logInfo("time wheel stopped",
+		"total_tasks", tw.taskCount,
+		"executed_tasks", tw.executedCount,
 	)
 }
 
@@ -325,11 +377,11 @@ func (tw *TimeWheel) addTaskInternal(task *Task) {
 	task.element = tw.slots[pos].PushBack(task)
 	tw.taskMap[task.ID] = task
 
-	mlog.Debug("task added to time wheel",
-		zap.String("id", task.ID),
-		zap.Duration("delay", task.Delay),
-		zap.Int("pos", pos),
-		zap.Int("round", task.Round),
+	tw.logDebug("task added to time wheel",
+		"id", task.ID,
+		"delay", task.Delay,
+		"pos", pos,
+		"round", task.Round,
 	)
 }
 
@@ -352,19 +404,19 @@ func (tw *TimeWheel) executeTask(task *Task) (err error) {
 	ctx := context.WithValue(tw.ctx, "request_id", fmt.Sprintf("tw_%s_%d", task.ID, start.Unix()))
 
 	// 记录开始日志
-	mlog.Debug("task executing",
-		zap.String("id", task.ID),
-		zap.Duration("delay", task.Delay),
+	tw.logDebug("task executing",
+		"id", task.ID,
+		"delay", task.Delay,
 	)
 
 	// 捕获 panic
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic: %v\n%s", r, string(debug.Stack()))
-			mlog.Error("task panic",
-				zap.String("id", task.ID),
-				zap.Any("panic", r),
-				zap.String("stack", string(debug.Stack())),
+			tw.logError("task panic",
+				"id", task.ID,
+				"panic", r,
+				"stack", string(debug.Stack()),
 			)
 		}
 	}()
@@ -376,15 +428,15 @@ func (tw *TimeWheel) executeTask(task *Task) (err error) {
 	atomic.AddInt64(&tw.executedCount, 1)
 
 	if err != nil {
-		mlog.Error("task failed",
-			zap.String("id", task.ID),
-			zap.Error(err),
-			zap.Duration("duration", duration),
+		tw.logError("task failed",
+			"id", task.ID,
+			"error", err,
+			"duration", duration,
 		)
 	} else {
-		mlog.Debug("task completed",
-			zap.String("id", task.ID),
-			zap.Duration("duration", duration),
+		tw.logDebug("task completed",
+			"id", task.ID,
+			"duration", duration,
 		)
 	}
 
@@ -457,6 +509,9 @@ type HierarchicalTimeWheel struct {
 	cancel context.CancelFunc
 	// wg 等待组
 	wg sync.WaitGroup
+	// logger 为可选的日志记录器。
+	// 使用 Logger 接口而非 *zap.Logger，以解除对任何具体日志库的耦合。
+	logger Logger
 }
 
 // NewHierarchical 创建分层时间轮
@@ -483,7 +538,7 @@ func (htw *HierarchicalTimeWheel) Start() {
 	for _, tw := range htw.wheels {
 		tw.Start()
 	}
-	mlog.Info("hierarchical time wheel started")
+	htw.logInfo("hierarchical time wheel started")
 }
 
 // Stop 停止分层时间轮
@@ -492,7 +547,7 @@ func (htw *HierarchicalTimeWheel) Stop() {
 	for _, tw := range htw.wheels {
 		tw.Stop()
 	}
-	mlog.Info("hierarchical time wheel stopped")
+	htw.logInfo("hierarchical time wheel stopped")
 }
 
 // AddTask 添加延迟任务

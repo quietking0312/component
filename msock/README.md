@@ -29,7 +29,7 @@ package main
 
 import (
     "log"
-    "go_admin_element/admin_server/component/msock"
+    " github.com/quietking0312/component/msock"
 )
 
 func main() {
@@ -71,7 +71,7 @@ package main
 
 import (
     "log"
-    "go_admin_element/admin_server/component/msock"
+    "github.com/quietking0312/component/msock"
 )
 
 func main() {
@@ -275,7 +275,7 @@ package main
 
 import (
     "log"
-    "go_admin_element/admin_server/component/msock"
+    "github.com/quietking0312/component/msock"
 )
 
 func main() {

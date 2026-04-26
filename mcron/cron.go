@@ -9,11 +9,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/quietking0312/component/mlog"
-
 	"github.com/robfig/cron/v3"
-	"go.uber.org/zap"
 )
+
+// Logger 日志接口，用于解耦对具体日志库的依赖。
+// 使用者可传入 zap.SugaredLogger、logrus、标准库 log 或自定义实现。
+type Logger interface {
+	Debug(msg string, keysAndValues ...any)
+	Info(msg string, keysAndValues ...any)
+	Warn(msg string, keysAndValues ...any)
+	Error(msg string, keysAndValues ...any)
+}
 
 // contextKey 用于 context.WithValue 的私有类型，避免与其他包冲突
 type contextKey string
@@ -92,14 +98,18 @@ type Cron struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
+	// logger 为可选的日志记录器，通过 Option 注入。
+	// 使用 Logger 接口而非 *zap.Logger，以解除对任何具体日志库的耦合。
+	logger Logger
 }
 
 // Options 配置选项
 type Options struct {
 	// Location 时区，默认本地时区
 	Location *time.Location
-	// Logger 日志记录器
-	Logger *zap.Logger
+	// Logger 为可选的日志记录器。
+	// 使用 Logger 接口而非 *zap.Logger，以解除对任何具体日志库的耦合。
+	Logger Logger
 }
 
 // Option 配置函数
@@ -112,8 +122,9 @@ func WithLocation(loc *time.Location) Option {
 	}
 }
 
-// WithLogger 设置日志记录器
-func WithLogger(logger *zap.Logger) Option {
+// WithLogger 设置日志记录器。
+// 通过 Logger 接口注入，不绑定具体日志库（如 zap、logrus 等）。
+func WithLogger(logger Logger) Option {
 	return func(o *Options) {
 		o.Logger = logger
 	}
@@ -123,7 +134,9 @@ func WithLogger(logger *zap.Logger) Option {
 func New(opts ...Option) *Cron {
 	options := &Options{
 		Location: time.Local,
-		Logger:   mlog.Logger(),
+		// 默认不设置 logger，避免硬编码依赖 mlog 模块。
+		// 如需日志，可通过 WithLogger 注入 *zap.Logger。
+		Logger: nil,
 	}
 
 	for _, opt := range opts {
@@ -142,6 +155,7 @@ func New(opts ...Option) *Cron {
 		location: options.Location,
 		ctx:      ctx,
 		cancel:   cancel,
+		logger:   options.Logger,
 	}
 
 	return c
@@ -150,7 +164,7 @@ func New(opts ...Option) *Cron {
 // Start 启动调度器
 func (c *Cron) Start() {
 	c.cron.Start()
-	mlog.Info("cron scheduler started")
+	c.logInfo("cron scheduler started")
 }
 
 // Stop 停止调度器
@@ -158,7 +172,7 @@ func (c *Cron) Stop() {
 	c.cancel()
 	c.cron.Stop()
 	c.wg.Wait()
-	mlog.Info("cron scheduler stopped")
+	c.logInfo("cron scheduler stopped")
 }
 
 // AddJob 添加任务
@@ -206,10 +220,10 @@ func (c *Cron) AddJob(name string, schedule Schedule, job Job) (cron.EntryID, er
 		wrapper.entry.NextRun = time.Now().Add(schedule.Delay)
 	}
 
-	mlog.Info("job added",
-		zap.String("name", name),
-		zap.String("cron", schedule.Cron),
-		zap.Duration("interval", schedule.Interval),
+	c.logInfo("job added",
+		"name", name,
+		"cron", schedule.Cron,
+		"interval", schedule.Interval,
 	)
 
 	return id, nil
@@ -228,7 +242,7 @@ func (c *Cron) Remove(id cron.EntryID) {
 	if entry, ok := c.jobs[id]; ok {
 		c.cron.Remove(id)
 		delete(c.jobs, id)
-		mlog.Info("job removed", zap.String("name", entry.Name))
+		c.logInfo("job removed", "name", entry.Name)
 	}
 }
 
@@ -270,7 +284,7 @@ func (c *Cron) RunOnceAsync(id cron.EntryID) {
 	go func() {
 		defer c.wg.Done()
 		if err := c.RunOnce(id); err != nil {
-			mlog.Error("run once async failed", zap.Error(err))
+			c.logError("run once async failed", "error", err)
 		}
 	}()
 }
@@ -289,9 +303,9 @@ func (c *Cron) executeJob(entry *Entry) (err error) {
 	ctx = context.WithValue(ctx, contextKeyRequestID, fmt.Sprintf("cron_%s_%d", entry.Name, start.Unix()))
 
 	// 记录开始日志
-	mlog.Info("job started",
-		zap.String("name", entry.Name),
-		zap.Int64("run_count", entry.RunCount),
+	c.logInfo("job started",
+		"name", entry.Name,
+		"run_count", entry.RunCount,
 	)
 
 	// 捕获 panic
@@ -300,10 +314,10 @@ func (c *Cron) executeJob(entry *Entry) (err error) {
 			err = fmt.Errorf("panic: %v\n%s", r, string(debug.Stack()))
 			entry.ErrorCount++
 			entry.LastError = err
-			mlog.Error("job panic",
-				zap.String("name", entry.Name),
-				zap.Any("panic", r),
-				zap.String("stack", string(debug.Stack())),
+			c.logError("job panic",
+				"name", entry.Name,
+				"panic", r,
+				"stack", string(debug.Stack()),
 			)
 		}
 	}()
@@ -316,15 +330,15 @@ func (c *Cron) executeJob(entry *Entry) (err error) {
 	if err != nil {
 		entry.ErrorCount++
 		entry.LastError = err
-		mlog.Error("job failed",
-			zap.String("name", entry.Name),
-			zap.Error(err),
-			zap.Duration("duration", duration),
+		c.logError("job failed",
+			"name", entry.Name,
+			"error", err,
+			"duration", duration,
 		)
 	} else {
-		mlog.Info("job completed",
-			zap.String("name", entry.Name),
-			zap.Duration("duration", duration),
+		c.logInfo("job completed",
+			"name", entry.Name,
+			"duration", duration,
 		)
 	}
 
@@ -342,19 +356,35 @@ func (w *jobWrapper) Run() {
 	w.cron.executeJob(w.entry)
 }
 
+// logInfo 安全地记录 Info 级别日志。
+// 如果 logger 为 nil（未注入），则跳过日志记录，避免 panic。
+func (c *Cron) logInfo(msg string, keysAndValues ...any) {
+	if c.logger != nil {
+		c.logger.Info(msg, keysAndValues...)
+	}
+}
+
+// logError 安全地记录 Error 级别日志。
+// 如果 logger 为 nil（未注入），则跳过日志记录，避免 panic。
+func (c *Cron) logError(msg string, keysAndValues ...any) {
+	if c.logger != nil {
+		c.logger.Error(msg, keysAndValues...)
+	}
+}
+
 // cronLogger 适配 cron 的日志接口
 type cronLogger struct {
-	logger *zap.Logger
+	logger Logger
 }
 
 func (l *cronLogger) Info(msg string, keysAndValues ...interface{}) {
-	l.logger.Sugar().Infow(msg, keysAndValues...)
+	l.logger.Info(msg, keysAndValues...)
 }
 
 func (l *cronLogger) Error(err error, msg string, keysAndValues ...interface{}) {
 	fields := []interface{}{"error", err}
 	fields = append(fields, keysAndValues...)
-	l.logger.Sugar().Errorw(msg, fields...)
+	l.logger.Error(msg, fields...)
 }
 
 // ==================== 便捷函数 ====================

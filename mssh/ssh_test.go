@@ -2,7 +2,6 @@ package mssh
 
 import (
 	"fmt"
-	"github.com/quietking0312/component/mbar"
 	"os"
 	"path"
 	"testing"
@@ -63,8 +62,6 @@ func TestCli_UploadFileAndProgress(t *testing.T) {
 	fmt.Println("totalSize: ", s.Size())
 	defer srcFile.Close()
 
-	b := mbar.NewBar(int(s.Size()))
-
 	ch := make(chan int64, 1000)
 	go func() {
 		if err := cli.UploadFileAndProgress(srcFile, path.Join("/data", path.Base("hello.conf")), ch); err != nil {
@@ -72,11 +69,7 @@ func TestCli_UploadFileAndProgress(t *testing.T) {
 			return
 		}
 	}()
-	for {
-		select {
-		case s := <-ch:
-			fmt.Println(s)
-			b.Add(int(s))
-		}
+	for progress := range ch {
+		fmt.Printf("upload progress: %d bytes\n", progress)
 	}
 }

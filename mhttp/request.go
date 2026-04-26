@@ -10,9 +10,6 @@ import (
 	"net/url"
 	"strings"
 	"time"
-
-	"github.com/quietking0312/component/mlog"
-	"go.uber.org/zap"
 )
 
 // Request HTTP 请求构建器
@@ -161,21 +158,25 @@ func (r *Request) Do() (*Response, error) {
 
 	// 记录日志
 	duration := time.Since(start)
-	fields := []zap.Field{
-		zap.String("method", r.method),
-		zap.String("url", reqURL),
-		zap.Duration("duration", duration),
-	}
 	if err != nil {
-		fields = append(fields, zap.Error(err))
-		if mlog.Logger() != nil {
-			mlog.Error("http request failed", fields...)
+		// 通过 Logger 接口注入记录日志，不绑定任何具体日志库
+		if r.client.logger != nil {
+			r.client.logger.Error("http request failed",
+				"method", r.method,
+				"url", reqURL,
+				"duration", duration,
+				"error", err,
+			)
 		}
 		return nil, err
 	}
-	fields = append(fields, zap.Int("status", resp.StatusCode()))
-	if mlog.Logger() != nil {
-		mlog.Info("http request completed", fields...)
+	if r.client.logger != nil {
+		r.client.logger.Info("http request completed",
+			"method", r.method,
+			"url", reqURL,
+			"duration", duration,
+			"status", resp.StatusCode(),
+		)
 	}
 
 	return resp, nil

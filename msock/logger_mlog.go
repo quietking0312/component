@@ -4,29 +4,30 @@
 package msock
 
 import (
-	"github.com/quietking0312/component/mlog"
+	"log"
 )
 
-// MLogLogger 使用 mlog 的日志实现
-type MLogLogger struct{}
+// StdLogger 使用标准库 log 的日志实现。
+// 不再直接依赖 mlog 模块，如需使用 mlog，请在外部实现 Logger 接口并传入。
+type StdLogger struct{}
 
-// NewMLogLogger 创建 mlog 日志器
-func NewMLogLogger() Logger {
-	return &MLogLogger{}
+// NewStdLogger 创建标准库日志记录器
+func NewStdLogger() Logger {
+	return &StdLogger{}
 }
 
-func (l *MLogLogger) Debugf(format string, args ...interface{}) {
-	mlog.Debugf(format, args...)
+func (l *StdLogger) Debugf(format string, args ...interface{}) {
+	log.Printf("[DEBUG] "+format, args...)
 }
 
-func (l *MLogLogger) Infof(format string, args ...interface{}) {
-	mlog.Infof(format, args...)
+func (l *StdLogger) Infof(format string, args ...interface{}) {
+	log.Printf("[INFO] "+format, args...)
 }
 
-func (l *MLogLogger) Warnf(format string, args ...interface{}) {
-	mlog.Warnf(format, args...)
+func (l *StdLogger) Warnf(format string, args ...interface{}) {
+	log.Printf("[WARN] "+format, args...)
 }
 
-func (l *MLogLogger) Errorf(format string, args ...interface{}) {
-	mlog.Errorf(format, args...)
+func (l *StdLogger) Errorf(format string, args ...interface{}) {
+	log.Printf("[ERROR] "+format, args...)
 }

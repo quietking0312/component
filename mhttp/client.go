@@ -6,10 +6,22 @@ import (
 	"time"
 )
 
+// Logger 日志接口，用于解耦对具体日志库的依赖。
+// 使用者可传入 zap.SugaredLogger、logrus、标准库 log 或自定义实现。
+type Logger interface {
+	Debug(msg string, keysAndValues ...any)
+	Info(msg string, keysAndValues ...any)
+	Warn(msg string, keysAndValues ...any)
+	Error(msg string, keysAndValues ...any)
+}
+
 // Client HTTP 客户端封装
 type Client struct {
 	client  *http.Client
 	timeout time.Duration
+	// logger 为可选的日志记录器，通过 WithLogger 注入。
+	// 使用 Logger 接口而非 *zap.Logger，以解除对任何具体日志库的耦合。
+	logger Logger
 }
 
 // Option 客户端配置选项
@@ -54,6 +66,14 @@ func WithTimeout(timeout time.Duration) Option {
 func WithHTTPClient(client *http.Client) Option {
 	return func(c *Client) {
 		c.client = client
+	}
+}
+
+// WithLogger 设置日志记录器。
+// 通过 Logger 接口注入，不绑定具体日志库（如 zap、logrus 等）。
+func WithLogger(logger Logger) Option {
+	return func(c *Client) {
+		c.logger = logger
 	}
 }
 
