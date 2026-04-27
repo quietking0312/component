@@ -13,6 +13,7 @@ const (
 	ConnTypeTCP       ConnType = "tcp"
 	ConnTypeWebSocket ConnType = "websocket"
 	ConnTypeKCP       ConnType = "kcp"
+	ConnTypeGWS       ConnType = "gws"
 )
 
 // Message 消息接口

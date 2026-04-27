@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/lxzan/gws"
 	"github.com/xtaci/kcp-go/v5"
 )
 
@@ -64,6 +65,8 @@ func (c *Client) Connect(addr string) error {
 		return c.connectWebSocket(addr)
 	case ConnTypeKCP:
 		return c.connectKCP(addr)
+	case ConnTypeGWS:
+		return c.connectGWS(addr)
 	default:
 		return ErrUnsupportedProtocol
 	}
@@ -143,6 +146,45 @@ func (c *Client) connectWebSocket(addr string) error {
 	go conn.readLoop()
 
 	c.logger.Infof("websocket connected to %s", addr)
+	return nil
+}
+
+// connectGWS 连接gws WebSocket服务器
+func (c *Client) connectGWS(addr string) error {
+	handler := &gwsClientEventHandler{client: c}
+	socket, _, err := gws.NewClient(handler, &gws.ClientOption{
+		Addr:             addr,
+		HandshakeTimeout: 10 * time.Second,
+		ReadBufferSize:   c.config.ReadBufferSize,
+	})
+	if err != nil {
+		c.logger.Errorf("gws connect error: %v", err)
+		return err
+	}
+
+	conn := &gwsClientConn{
+		gwsConn: newGWSConn(socket, nil, c.codec),
+		client:  c,
+	}
+	c.conn = conn
+	socket.Session().Store("msock_conn", conn)
+
+	// 触发连接回调
+	if c.handlers.onConnect != nil {
+		c.handlers.onConnect(conn)
+	}
+
+	// 启动读取循环
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				c.logger.Errorf("panic in gws client readLoop: %v", r)
+			}
+		}()
+		socket.ReadLoop()
+	}()
+
+	c.logger.Infof("gws connected to %s", addr)
 	return nil
 }
 
@@ -382,6 +424,48 @@ func (c *wsClientConn) handleBinaryMessage(data []byte) {
 func (c *wsClientConn) handleTextMessage(data []byte) {
 	msg := NewMessage(0, data)
 	c.client.handleMessage(c, msg)
+}
+
+// gwsClientEventHandler gws客户端事件处理器
+type gwsClientEventHandler struct {
+	client *Client
+}
+
+func (h *gwsClientEventHandler) OnOpen(socket *gws.Conn) {}
+
+func (h *gwsClientEventHandler) OnClose(socket *gws.Conn, err error) {
+	v, ok := socket.Session().Load("msock_conn")
+	if !ok {
+		return
+	}
+	conn := v.(*gwsClientConn)
+	_ = conn.Close()
+	if h.client.handlers.onDisconnect != nil {
+		h.client.handlers.onDisconnect(conn)
+	}
+}
+
+func (h *gwsClientEventHandler) OnPing(socket *gws.Conn, payload []byte) {
+	_ = socket.WritePong(nil)
+}
+
+func (h *gwsClientEventHandler) OnPong(socket *gws.Conn, payload []byte) {}
+
+func (h *gwsClientEventHandler) OnMessage(socket *gws.Conn, message *gws.Message) {
+	defer message.Close()
+
+	v, ok := socket.Session().Load("msock_conn")
+	if !ok {
+		return
+	}
+	conn := v.(*gwsClientConn)
+
+	switch message.Opcode {
+	case gws.OpcodeBinary:
+		conn.handleBinaryMessage(message.Bytes())
+	case gws.OpcodeText:
+		conn.handleTextMessage(message.Bytes())
+	}
 }
 
 // kcpClientConn KCP客户端连接

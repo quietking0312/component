@@ -116,6 +116,77 @@ func TestServer_TCP(t *testing.T) {
 	}
 }
 
+// TestServer_GWS 测试gws服务器
+func TestServer_GWS(t *testing.T) {
+	router := NewRouter()
+	received := make(chan Message, 10)
+
+	router.Register(1, func(conn Conn, msg Message) {
+		received <- msg
+		reply := NewMessage(2, []byte("reply"))
+		conn.Send(reply)
+	})
+
+	server, err := NewServer(
+		WithAddress(":0"),
+		WithConnType(ConnTypeGWS),
+		WithCodec(NewSimpleCodec()),
+	)
+	assert.NoError(t, err)
+	server.SetRouter(router)
+
+	// 启动服务器
+	go server.Run()
+	defer server.Stop()
+
+	time.Sleep(100 * time.Millisecond)
+
+	// 获取实际地址
+	addr := server.listener.Addr().String()
+
+	// 创建客户端
+	clientRouter := NewRouter()
+	clientReceived := make(chan Message, 10)
+	clientRouter.Register(2, func(conn Conn, msg Message) {
+		clientReceived <- msg
+	})
+
+	client := NewClient(
+		WithConnType(ConnTypeGWS),
+		WithCodec(NewSimpleCodec()),
+	)
+	client.SetRouter(clientRouter)
+
+	err = client.Connect("ws://" + addr + "/ws")
+	assert.NoError(t, err)
+	defer client.Close()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// 发送消息
+	msg := NewMessage(1, []byte("hello"))
+	err = client.Send(msg)
+	assert.NoError(t, err)
+
+	// 验证服务器收到消息
+	select {
+	case m := <-received:
+		assert.Equal(t, uint32(1), m.RouteID())
+		assert.Equal(t, "hello", string(m.Data()))
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for server to receive message")
+	}
+
+	// 验证客户端收到回复
+	select {
+	case m := <-clientReceived:
+		assert.Equal(t, uint32(2), m.RouteID())
+		assert.Equal(t, "reply", string(m.Data()))
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for client to receive reply")
+	}
+}
+
 // TestRouter 测试路由器
 func TestRouter(t *testing.T) {
 	router := NewRouter()

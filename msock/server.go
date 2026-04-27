@@ -88,6 +88,8 @@ func (s *Server) Run() error {
 		return s.runWebSocket()
 	case ConnTypeKCP:
 		return s.runKCP()
+	case ConnTypeGWS:
+		return s.runGWSServer()
 	default:
 		return ErrUnsupportedProtocol
 	}
