@@ -5,79 +5,105 @@ import (
 	"time"
 )
 
-type DBCfg struct {
-	DriveName         string
-	DataSourceName    string
-	MaxIdleConnection int
-	MaxOpenConnection int
-	MaxQueryTime      time.Duration
+// Config holds database connection configuration.
+type Config struct {
+	DriverName      string
+	DataSourceName  string
+	MaxIdleConns    int
+	MaxOpenConns    int
+	ConnMaxIdleTime time.Duration
+	ConnMaxLifetime time.Duration
+	QueryTimeout    time.Duration
 }
 
-type Option func(cfg *DBCfg)
+// Option configures a Config.
+type Option func(cfg *Config)
 
-func DefaultDBOption() *DBCfg {
-	return &DBCfg{
-		DriveName:         "",
-		DataSourceName:    "",
-		MaxIdleConnection: 10,
-		MaxOpenConnection: 5,
-		MaxQueryTime:      3,
+// DefaultConfig returns a Config with sensible defaults.
+func DefaultConfig() *Config {
+	return &Config{
+		MaxIdleConns:    5,
+		MaxOpenConns:    25,
+		ConnMaxIdleTime: 30 * time.Minute,
+		ConnMaxLifetime: 1 * time.Hour,
+		QueryTimeout:    3 * time.Second,
 	}
 }
 
-func DriveName(drivename string) Option {
-	return func(cfg *DBCfg) {
-		cfg.DriveName = drivename
+// DriverName sets the database driver name (e.g. "mysql", "sqlite3", "postgres").
+func DriverName(name string) Option {
+	return func(cfg *Config) {
+		cfg.DriverName = name
 	}
 }
 
+// DataSourceName sets the DSN / connection string.
 func DataSourceName(dsn string) Option {
-	return func(cfg *DBCfg) {
+	return func(cfg *Config) {
 		cfg.DataSourceName = dsn
 	}
 }
 
-func MaxIdleConnection(idle int) Option {
-	return func(cfg *DBCfg) {
-		cfg.MaxIdleConnection = idle
+// MaxIdleConns sets the maximum number of idle connections.
+func MaxIdleConns(n int) Option {
+	return func(cfg *Config) {
+		cfg.MaxIdleConns = n
 	}
 }
 
-func MaxOpenConnection(open int) Option {
-	return func(cfg *DBCfg) {
-		cfg.MaxOpenConnection = open
+// MaxOpenConns sets the maximum number of open connections.
+func MaxOpenConns(n int) Option {
+	return func(cfg *Config) {
+		cfg.MaxOpenConns = n
 	}
 }
 
-func MaxQueryTime(query time.Duration) Option {
-	return func(cfg *DBCfg) {
-		cfg.MaxQueryTime = query
+// ConnMaxIdleTime sets the maximum amount of time a connection may be idle.
+func ConnMaxIdleTime(d time.Duration) Option {
+	return func(cfg *Config) {
+		cfg.ConnMaxIdleTime = d
 	}
 }
 
+// ConnMaxLifetime sets the maximum amount of time a connection may be reused.
+func ConnMaxLifetime(d time.Duration) Option {
+	return func(cfg *Config) {
+		cfg.ConnMaxLifetime = d
+	}
+}
+
+// QueryTimeout sets the default query / transaction timeout.
+func QueryTimeout(d time.Duration) Option {
+	return func(cfg *Config) {
+		cfg.QueryTimeout = d
+	}
+}
+
+// TxOption customizes transaction options.
 type TxOption func(options *sql.TxOptions)
 
-// LevelReadCommitted 读取完成立刻释放共享锁模式
+// LevelReadCommitted uses the read-committed isolation level.
 func LevelReadCommitted() TxOption {
 	return func(options *sql.TxOptions) {
 		options.Isolation = sql.LevelReadCommitted
 	}
 }
 
-// LevelRepeatableRead 事务完成释放共享锁模式
+// LevelRepeatableRead uses the repeatable-read isolation level.
 func LevelRepeatableRead() TxOption {
 	return func(options *sql.TxOptions) {
 		options.Isolation = sql.LevelRepeatableRead
 	}
 }
 
-// LevelSerializable 事务序列操作
+// LevelSerializable uses the serializable isolation level.
 func LevelSerializable() TxOption {
 	return func(options *sql.TxOptions) {
 		options.Isolation = sql.LevelSerializable
 	}
 }
 
+// DefaultTxOptions returns the default transaction options.
 func DefaultTxOptions() *sql.TxOptions {
 	return &sql.TxOptions{
 		Isolation: sql.LevelDefault,
