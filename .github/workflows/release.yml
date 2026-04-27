@@ -1,0 +1,57 @@
+name: Release Submodules
+
+on:
+  # 方式1：推送 release/v* 标签触发（推荐）
+  push:
+    tags:
+      - 'release/v*'
+  # 方式2：发布 GitHub Release 时触发
+  release:
+    types: [published]
+
+jobs:
+  tag-submodules:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            VERSION=${GITHUB_REF#refs/tags/release/}
+          else
+            VERSION=${GITHUB_REF#refs/tags/}
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Releasing version: $VERSION"
+
+      - name: Tag and Push Submodules
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+
+          MODULES=(
+            m2fa marr mbar mcachedb mconf mcron mcyptos
+            memail mencoding merr mexcel mhttp middleware
+            mjwt mlog mmath mmen mpubsub mrand mredis
+            mrpc msnowflake msock msql mssh mstorage
+            mstore mtime mtimewheel mtool mutils
+          )
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          for mod in "${MODULES[@]}"; do
+            TAG="${mod}/${VERSION}"
+            if git rev-parse "$TAG" >/dev/null 2>&1; then
+              echo "Tag $TAG already exists, skipping"
+            else
+              git tag "$TAG"
+              git push origin "$TAG"
+              echo "Created and pushed: $TAG"
+            fi
+          done
