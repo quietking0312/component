@@ -7,9 +7,8 @@ import (
 	"runtime/debug"
 )
 
-// Recovery returns a middleware that recovers from panics in handlers.
-// Recovered panics are logged via the provided logger function; if nil,
-// log.Printf is used.
+// Recovery 返回一个捕获 handler panic 的中间件。
+// 捕获到的 panic 会通过传入的 logger 输出；若 logger 为 nil，则使用 log.Printf。
 func Recovery(logger func(format string, v ...any)) Middleware {
 	if logger == nil {
 		logger = log.Printf
@@ -27,7 +26,7 @@ func Recovery(logger func(format string, v ...any)) Middleware {
 	}
 }
 
-// Logger returns a middleware that logs event dispatching.
+// Logger 返回一个记录事件分发过程的中间件。
 func Logger(logger func(format string, v ...any)) Middleware {
 	if logger == nil {
 		logger = log.Printf
@@ -44,7 +43,7 @@ func Logger(logger func(format string, v ...any)) Middleware {
 	}
 }
 
-// Filter returns a middleware that only passes events matching the predicate.
+// Filter 返回一个过滤中间件，仅让满足 predicate 的事件通过。
 func Filter(predicate func(event Event) bool) Middleware {
 	return func(next Handler) Handler {
 		return func(ctx context.Context, event Event) error {

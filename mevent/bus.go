@@ -7,31 +7,31 @@ import (
 	"time"
 )
 
-// Event is an in-process application event.
+// Event 表示一个进程内应用事件。
 type Event struct {
-	Name string    // event identifier, e.g. "user.created"
-	Data any       // payload
-	Time time.Time // emission time
+	Name string    // 事件标识，如 "user.created"
+	Data any       // 负载数据
+	Time time.Time // 触发时间
 }
 
-// Handler processes events.
+// Handler 处理事件的函数签名。
 type Handler func(ctx context.Context, event Event) error
 
-// ErrorStrategy defines how Publish handles handler errors.
+// ErrorStrategy 定义 Publish 遇到 handler 错误时的处理策略。
 type ErrorStrategy int
 
 const (
-	// StopOnError stops executing remaining handlers on first error.
+	// StopOnError 遇到第一个错误即停止执行后续 handler。
 	StopOnError ErrorStrategy = iota
-	// ContinueOnError continues executing all handlers, collecting errors.
+	// ContinueOnError 继续执行所有 handler，并收集错误。
 	ContinueOnError
 )
 
-// Middleware wraps handlers with cross-cutting concerns (logging, recovery, metrics, etc.).
+// Middleware 中间件，用于在 handler 外包裹横切关注点（日志、恢复、监控等）。
 type Middleware func(next Handler) Handler
 
-// Bus is an in-process event bus for decoupling module communication.
-// Zero-value Bus is NOT usable; always construct with New().
+// Bus 进程内事件总线，用于解耦模块间通信。
+// 零值 Bus 不可用，必须通过 New() 构造。
 type Bus struct {
 	mu          sync.RWMutex
 	handlers    map[string][]Handler
@@ -39,10 +39,10 @@ type Bus struct {
 	middlewares []Middleware
 }
 
-// Option configures a Bus.
+// Option Bus 的配置选项。
 type Option func(*Bus)
 
-// New creates a new event bus.
+// New 创建一个新的事件总线。
 func New(opts ...Option) *Bus {
 	b := &Bus{
 		handlers: make(map[string][]Handler),
@@ -54,30 +54,29 @@ func New(opts ...Option) *Bus {
 	return b
 }
 
-// WithErrorStrategy sets the error handling strategy for Publish.
+// WithErrorStrategy 设置 Publish 的错误处理策略。
 func WithErrorStrategy(s ErrorStrategy) Option {
 	return func(b *Bus) {
 		b.strategy = s
 	}
 }
 
-// Use appends middleware to the bus. Middleware is applied to all handlers
-// registered after the call. To apply to all handlers, call Use before Subscribe.
+// Use 向总线追加中间件。中间件仅对后续注册的 handler 生效；
+// 若要应用到所有 handler，请在 Subscribe 之前调用 Use。
 func (b *Bus) Use(mw ...Middleware) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.middlewares = append(b.middlewares, mw...)
 }
 
-// Subscribe registers a handler for events with the given name.
-// Handlers are executed in registration order.
+// Subscribe 注册一个事件订阅者，按注册顺序执行。
 func (b *Bus) Subscribe(name string, h Handler) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.handlers[name] = append(b.handlers[name], b.wrap(h))
 }
 
-// wrap applies middlewares to a handler.
+// wrap 将中间件应用到 handler。
 func (b *Bus) wrap(h Handler) Handler {
 	for i := len(b.middlewares) - 1; i >= 0; i-- {
 		h = b.middlewares[i](h)
@@ -85,8 +84,8 @@ func (b *Bus) wrap(h Handler) Handler {
 	return h
 }
 
-// Publish synchronously dispatches an event to all subscribers of e.Name.
-// If no subscribers exist, it returns nil immediately.
+// Publish 同步分发事件给 e.Name 的所有订阅者。
+// 若无订阅者，立即返回 nil。
 func (b *Bus) Publish(ctx context.Context, e Event) error {
 	if e.Time.IsZero() {
 		e.Time = time.Now()
@@ -117,22 +116,22 @@ func (b *Bus) Publish(ctx context.Context, e Event) error {
 	return nil
 }
 
-// PublishAsync dispatches an event asynchronously in a new goroutine.
-// Errors are silently dropped; use Publish if you need error handling.
+// PublishAsync 在独立 goroutine 中异步分发事件。
+// 错误会被静默丢弃；如需错误处理，请使用 Publish。
 func (b *Bus) PublishAsync(ctx context.Context, e Event) {
 	go func() {
 		_ = b.Publish(ctx, e)
 	}()
 }
 
-// HasSubscribers reports whether anyone is listening to the given event name.
+// HasSubscribers 报告指定事件是否存在订阅者。
 func (b *Bus) HasSubscribers(name string) bool {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return len(b.handlers[name]) > 0
 }
 
-// Subscribers returns a snapshot of registered event names.
+// Subscribers 返回当前已注册事件名称的快照。
 func (b *Bus) Subscribers() []string {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
