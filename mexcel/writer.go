@@ -216,9 +216,13 @@ func (w *Writer) SetActiveSheet(name string) {
 	}
 }
 
-// WriteTo 写入到 io.Writer
-func (w *Writer) WriteTo(writer io.Writer) error {
-	return w.file.Write(writer)
+// WriteTo 写入到 io.Writer，实现 io.WriterTo 接口
+func (w *Writer) WriteTo(writer io.Writer) (int64, error) {
+	buf, err := w.file.WriteToBuffer()
+	if err != nil {
+		return 0, err
+	}
+	return buf.WriteTo(writer)
 }
 
 // SaveAs 保存到文件
@@ -276,5 +280,6 @@ func ExportToWriter(data interface{}, writer io.Writer, opts ...WriterOption) er
 		return err
 	}
 
-	return w.WriteTo(writer)
+	_, err := w.WriteTo(writer)
+	return err
 }

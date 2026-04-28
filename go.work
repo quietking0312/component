@@ -2,7 +2,6 @@ go 1.25.0
 
 use (
 	.
-	./mevent
 	./m2fa
 	./marr
 	./mbar
@@ -13,6 +12,7 @@ use (
 	./memail
 	./mencoding
 	./merr
+	./mevent
 	./mexcel
 	./mhttp
 	./middleware

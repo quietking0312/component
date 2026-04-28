@@ -207,8 +207,8 @@ func (c *SubGroup[T]) worker(id int) {
 	}
 	c.workers = append(c.workers, w)
 	c.workersMu.Unlock()
+	c.wg.Add(1)
 	go func() {
-		c.wg.Add(1)
 		c.metrics.ActiveWorkers.Add(1)
 		c.logger.Info(fmt.Sprintf("subGroup:%s  worker: %d create", c.id, id))
 		defer func() {
