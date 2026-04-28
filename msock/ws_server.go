@@ -1,6 +1,7 @@
 package msock
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"sync"
@@ -145,7 +146,7 @@ func (c *wsConn) SetWriteDeadline(t time.Time) error {
 func (c *wsConn) readLoop() {
 	defer func() {
 		if r := recover(); r != nil {
-			c.server.logger.Errorf("panic in ws readLoop: %v", r)
+			c.server.logger.Error(fmt.Sprintf("panic in ws readLoop: %v", r))
 		}
 		c.Close()
 	}()
@@ -163,7 +164,7 @@ func (c *wsConn) readLoop() {
 		if err != nil {
 			if !c.IsClosed() {
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					c.server.logger.Warnf("websocket error: %v", err)
+					c.server.logger.Warn(fmt.Sprintf("websocket error: %v", err))
 				}
 			}
 			return
@@ -175,7 +176,7 @@ func (c *wsConn) readLoop() {
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
-						c.server.logger.Errorf("panic in handler: %v, conn: %s", r, c.ID())
+						c.server.logger.Error(fmt.Sprintf("panic in handler: %v, conn: %s", r, c.ID()))
 					}
 				}()
 				c.handleBinaryMessage(data)
@@ -199,7 +200,7 @@ func (c *wsConn) handleBinaryMessage(data []byte) {
 	for len(data) > 0 {
 		msg, n, err := c.server.codec.Decode(data)
 		if err != nil {
-			c.server.logger.Errorf("decode error: %v", err)
+			c.server.logger.Error(fmt.Sprintf("decode error: %v", err))
 			return
 		}
 		if n == 0 {
@@ -227,7 +228,7 @@ func (s *Server) runWebSocketServer() error {
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			s.logger.Errorf("websocket upgrade error: %v", err)
+			s.logger.Error(fmt.Sprintf("websocket upgrade error: %v", err))
 			return
 		}
 
@@ -240,7 +241,7 @@ func (s *Server) runWebSocketServer() error {
 		Handler: mux,
 	}
 
-	s.logger.Infof("websocket server listening on %s/ws", s.config.Address)
+	s.logger.Info(fmt.Sprintf("websocket server listening on %s/ws", s.config.Address))
 
 	err := s.httpServer.ListenAndServe()
 	if err != nil && err != http.ErrServerClosed {
@@ -258,13 +259,13 @@ func (s *Server) handleWSConn(wsConnObj *websocket.Conn) {
 
 	// 添加到连接管理器
 	if !s.connManager.Add(conn) {
-		s.logger.Warnf("max connections reached, reject websocket connection from %s", wsConnObj.RemoteAddr())
+		s.logger.Warn(fmt.Sprintf("max connections reached, reject websocket connection from %s", wsConnObj.RemoteAddr()))
 		wsConnObj.Close()
 		return
 	}
 	defer s.connManager.Remove(conn.ID())
 
-	s.logger.Infof("websocket connection established: %s from %s", conn.ID(), conn.RemoteAddr())
+	s.logger.Info(fmt.Sprintf("websocket connection established: %s from %s", conn.ID(), conn.RemoteAddr()))
 
 	// 触发连接建立回调
 	if s.handlers.onConnect != nil {
@@ -275,7 +276,7 @@ func (s *Server) handleWSConn(wsConnObj *websocket.Conn) {
 	conn.readLoop()
 
 	// 连接断开
-	s.logger.Infof("websocket connection closed: %s", conn.ID())
+	s.logger.Info(fmt.Sprintf("websocket connection closed: %s", conn.ID()))
 
 	// 触发连接断开回调
 	if s.handlers.onDisconnect != nil {

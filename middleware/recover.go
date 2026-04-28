@@ -2,19 +2,27 @@ package middleware
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
 
-// Logger 日志接口，用于解耦对具体日志库的依赖。
-// 使用者可传入 zap.SugaredLogger、logrus、标准库 log 或自定义实现。
+// Logger 日志接口，统一使用 slog 风格。
 type Logger interface {
-	Debug(msg string, keysAndValues ...any)
-	Info(msg string, keysAndValues ...any)
-	Warn(msg string, keysAndValues ...any)
-	Error(msg string, keysAndValues ...any)
+	Debug(msg string, args ...any)
+	Info(msg string, args ...any)
+	Warn(msg string, args ...any)
+	Error(msg string, args ...any)
 }
+
+// stdLogLogger 默认使用标准库 log 输出。
+type stdLogLogger struct{}
+
+func (s *stdLogLogger) Debug(msg string, args ...any) { log.Println(append([]any{"[DEBUG]", msg}, args...)...) }
+func (s *stdLogLogger) Info(msg string, args ...any)  { log.Println(append([]any{"[INFO]", msg}, args...)...) }
+func (s *stdLogLogger) Warn(msg string, args ...any)  { log.Println(append([]any{"[WARN]", msg}, args...)...) }
+func (s *stdLogLogger) Error(msg string, args ...any) { log.Println(append([]any{"[ERROR]", msg}, args...)...) }
 
 // Recover 返回 Gin 的 panic 恢复中间件。
 // 当 handler 中发生 panic 时，会调用 recoveryFunc 进行恢复处理（如返回 500 错误）。
@@ -26,7 +34,7 @@ type Logger interface {
 //	    c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 //	}))
 func Recover(recoveryFunc gin.RecoveryFunc) gin.HandlerFunc {
-	return RecoverWithLogger(nil, recoveryFunc)
+	return RecoverWithLogger(&stdLogLogger{}, recoveryFunc)
 }
 
 // RecoverWithLogger 返回 Gin 的 panic 恢复中间件，支持通过 Logger 接口注入日志记录器。
@@ -49,10 +57,7 @@ type panicLogger struct {
 }
 
 func (p *panicLogger) Write(b []byte) (n int, err error) {
-	if p.logger != nil {
-		msg := string(b)
-		p.logger.Error("panic recovered", "stack", msg)
-	}
+	p.logger.Error("panic recovered", "stack", string(b))
 	return len(b), nil
 }
 
@@ -60,7 +65,7 @@ func (p *panicLogger) Write(b []byte) (n int, err error) {
 // 适用于非 Gin 框架的 HTTP 服务，发生 panic 时返回 500 错误。
 // 注意：此版本不记录 panic 日志，如需日志请使用 RecoveryWithLogger。
 func Recovery(next http.Handler) http.Handler {
-	return RecoveryWithLogger(nil, next)
+	return RecoveryWithLogger(&stdLogLogger{}, next)
 }
 
 // RecoveryWithLogger 返回标准库的 http.Handler 中间件，支持通过 Logger 接口注入日志记录器。
@@ -69,13 +74,11 @@ func RecoveryWithLogger(logger Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				if logger != nil {
-					logger.Error("panic recovered",
-						"error", rec,
-						"path", r.URL.Path,
-						"method", r.Method,
-					)
-				}
+				logger.Error("panic recovered",
+					"error", rec,
+					"path", r.URL.Path,
+					"method", r.Method,
+				)
 				http.Error(w, fmt.Sprintf("Internal Server Error: %v", rec), http.StatusInternalServerError)
 			}
 		}()

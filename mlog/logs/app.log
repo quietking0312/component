@@ -1,0 +1,5 @@
+2026-04-28 21:10:51.566	ERROR	mlog/log_test.go:12	world	{"error": "sss"}
+github.com/quietking0312/component/mlog.TestInitLog
+	F:/proj/component/mlog/log_test.go:12
+testing.tRunner
+	C:/Program Files/Go/src/testing/testing.go:1934

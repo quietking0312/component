@@ -1,6 +1,7 @@
 package msock
 
 import (
+	"fmt"
 	"sync"
 )
 
@@ -161,7 +162,7 @@ func Recovery(logger Logger) Middleware {
 						if conn != nil {
 							connID = conn.ID()
 						}
-						logger.Errorf("panic recovered: %v, conn: %s", err, connID)
+						logger.Error(fmt.Sprintf("panic recovered: %v, conn: %s", err, connID))
 					}
 				}
 			}()
@@ -175,8 +176,8 @@ func Logging(logger Logger) Middleware {
 	return func(next Handler) Handler {
 		return func(conn Conn, msg Message) {
 			if logger != nil {
-				logger.Debugf("recv msg, conn: %s, route: %d, size: %d",
-					conn.ID(), msg.RouteID(), len(msg.Data()))
+				logger.Debug(fmt.Sprintf("recv msg, conn: %s, route: %d, size: %d",
+					conn.ID(), msg.RouteID(), len(msg.Data())))
 			}
 			next(conn, msg)
 		}
@@ -189,7 +190,7 @@ func Auth(authFunc func(conn Conn) bool, logger Logger) Middleware {
 		return func(conn Conn, msg Message) {
 			if !authFunc(conn) {
 				if logger != nil {
-					logger.Warnf("auth failed, conn: %s", conn.ID())
+					logger.Warn(fmt.Sprintf("auth failed, conn: %s", conn.ID()))
 				}
 				return
 			}
@@ -204,7 +205,7 @@ func Validate(validateFunc func(msg Message) error, logger Logger) Middleware {
 		return func(conn Conn, msg Message) {
 			if err := validateFunc(msg); err != nil {
 				if logger != nil {
-					logger.Warnf("validate failed: %v, conn: %s", err, conn.ID())
+					logger.Warn(fmt.Sprintf("validate failed: %v, conn: %s", err, conn.ID()))
 				}
 				return
 			}
@@ -245,7 +246,7 @@ func RateLimit(maxRequests int, logger Logger) Middleware {
 
 			if current > maxRequests {
 				if logger != nil {
-					logger.Warnf("rate limit exceeded, conn: %s", connID)
+					logger.Warn(fmt.Sprintf("rate limit exceeded, conn: %s", connID))
 				}
 				return
 			}
@@ -269,7 +270,7 @@ func Timeout(timeoutFn func(), logger Logger) Middleware {
 			case <-done:
 			case <-conn.Context().Done():
 				if logger != nil {
-					logger.Warnf("handler timeout, conn: %s", conn.ID())
+					logger.Warn(fmt.Sprintf("handler timeout, conn: %s", conn.ID()))
 				}
 				if timeoutFn != nil {
 					timeoutFn()

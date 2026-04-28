@@ -1,6 +1,7 @@
 package msock
 
 import (
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -76,7 +77,7 @@ func (c *Client) Connect(addr string) error {
 func (c *Client) connectTCP(addr string) error {
 	netConn, err := net.DialTimeout("tcp", addr, 10*time.Second)
 	if err != nil {
-		c.logger.Errorf("tcp connect error: %v", err)
+		c.logger.Error(fmt.Sprintf("tcp connect error: %v", err))
 		return err
 	}
 
@@ -104,7 +105,7 @@ func (c *Client) connectTCP(addr string) error {
 	// 启动读取循环
 	go conn.readLoop()
 
-	c.logger.Infof("tcp connected to %s", addr)
+	c.logger.Info(fmt.Sprintf("tcp connected to %s", addr))
 	return nil
 }
 
@@ -118,7 +119,7 @@ func (c *Client) connectWebSocket(addr string) error {
 
 	ws, _, err := dialer.Dial(addr, nil)
 	if err != nil {
-		c.logger.Errorf("websocket connect error: %v", err)
+		c.logger.Error(fmt.Sprintf("websocket connect error: %v", err))
 		return err
 	}
 
@@ -145,7 +146,7 @@ func (c *Client) connectWebSocket(addr string) error {
 	// 启动读取循环
 	go conn.readLoop()
 
-	c.logger.Infof("websocket connected to %s", addr)
+	c.logger.Info(fmt.Sprintf("websocket connected to %s", addr))
 	return nil
 }
 
@@ -158,7 +159,7 @@ func (c *Client) connectGWS(addr string) error {
 		ReadBufferSize:   c.config.ReadBufferSize,
 	})
 	if err != nil {
-		c.logger.Errorf("gws connect error: %v", err)
+		c.logger.Error(fmt.Sprintf("gws connect error: %v", err))
 		return err
 	}
 
@@ -178,13 +179,13 @@ func (c *Client) connectGWS(addr string) error {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				c.logger.Errorf("panic in gws client readLoop: %v", r)
+				c.logger.Error(fmt.Sprintf("panic in gws client readLoop: %v", r))
 			}
 		}()
 		socket.ReadLoop()
 	}()
 
-	c.logger.Infof("gws connected to %s", addr)
+	c.logger.Info(fmt.Sprintf("gws connected to %s", addr))
 	return nil
 }
 
@@ -192,7 +193,7 @@ func (c *Client) connectGWS(addr string) error {
 func (c *Client) connectKCP(addr string) error {
 	conn, err := kcp.Dial(addr)
 	if err != nil {
-		c.logger.Errorf("kcp connect error: %v", err)
+		c.logger.Error(fmt.Sprintf("kcp connect error: %v", err))
 		return err
 	}
 
@@ -227,7 +228,7 @@ func (c *Client) connectKCP(addr string) error {
 	// 启动读取循环
 	go clientConn.readLoop()
 
-	c.logger.Infof("kcp connected to %s", addr)
+	c.logger.Info(fmt.Sprintf("kcp connected to %s", addr))
 	return nil
 }
 
@@ -294,7 +295,7 @@ func (c *Client) OnError(fn func(error)) {
 // handleMessage 处理消息
 func (c *Client) handleMessage(conn Conn, msg Message) {
 	if c.router == nil {
-		c.logger.Warnf("router not set, dropping message")
+		c.logger.Warn(fmt.Sprintf("router not set, dropping message"))
 		return
 	}
 	c.router.Handle(conn, msg)
@@ -312,7 +313,7 @@ type tcpClientConn struct {
 func (c *tcpClientConn) readLoop() {
 	defer func() {
 		if r := recover(); r != nil {
-			c.client.logger.Errorf("panic in client readLoop: %v", r)
+			c.client.logger.Error(fmt.Sprintf("panic in client readLoop: %v", r))
 		}
 		c.Close()
 		if c.client.handlers.onDisconnect != nil {
@@ -368,7 +369,7 @@ type wsClientConn struct {
 func (c *wsClientConn) readLoop() {
 	defer func() {
 		if r := recover(); r != nil {
-			c.client.logger.Errorf("panic in client ws readLoop: %v", r)
+			c.client.logger.Error(fmt.Sprintf("panic in client ws readLoop: %v", r))
 		}
 		c.Close()
 		if c.client.handlers.onDisconnect != nil {
@@ -478,7 +479,7 @@ type kcpClientConn struct {
 func (c *kcpClientConn) readLoop() {
 	defer func() {
 		if r := recover(); r != nil {
-			c.client.logger.Errorf("panic in client kcp readLoop: %v", r)
+			c.client.logger.Error(fmt.Sprintf("panic in client kcp readLoop: %v", r))
 		}
 		c.Close()
 		if c.client.handlers.onDisconnect != nil {

@@ -16,18 +16,18 @@ func NewStdLogger() Logger {
 	return &StdLogger{}
 }
 
-func (l *StdLogger) Debugf(format string, args ...interface{}) {
-	log.Printf("[DEBUG] "+format, args...)
+func (l *StdLogger) Debug(msg string, args ...any) {
+	log.Printf("[DEBUG] "+msg, args...)
 }
 
-func (l *StdLogger) Infof(format string, args ...interface{}) {
-	log.Printf("[INFO] "+format, args...)
+func (l *StdLogger) Info(msg string, args ...any) {
+	log.Printf("[INFO] "+msg, args...)
 }
 
-func (l *StdLogger) Warnf(format string, args ...interface{}) {
-	log.Printf("[WARN] "+format, args...)
+func (l *StdLogger) Warn(msg string, args ...any) {
+	log.Printf("[WARN] "+msg, args...)
 }
 
-func (l *StdLogger) Errorf(format string, args ...interface{}) {
-	log.Printf("[ERROR] "+format, args...)
+func (l *StdLogger) Error(msg string, args ...any) {
+	log.Printf("[ERROR] "+msg, args...)
 }

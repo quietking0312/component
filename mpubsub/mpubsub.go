@@ -31,7 +31,7 @@ type MPubSub[T any] struct {
 	subGroup  sync.Map // channelId ==>  SubGroupIface
 	parser    *GobParser
 	isRunning atomic.Bool
-	logger    LoggerIface
+	logger    Logger
 }
 
 func NewMPubSub[T any](channel []string, subFunc func(ctx context.Context, k string) (<-chan []byte, error),
@@ -58,7 +58,7 @@ func NewMPubSub[T any](channel []string, subFunc func(ctx context.Context, k str
 
 type Option[T any] func(sub *MPubSub[T])
 
-func WithLogger[T any](logger LoggerIface) Option[T] {
+func WithLogger[T any](logger Logger) Option[T] {
 	return func(m *MPubSub[T]) {
 		m.logger = logger
 	}
@@ -106,7 +106,7 @@ func (m *MPubSub[T]) startChannel(k string) {
 					retryCount++
 					continue
 				} else {
-					m.logger.Error(fmt.Errorf("监听消息超过最大重试次数 c频道:%s", k))
+					m.logger.Error(fmt.Sprintf("监听消息超过最大重试次数 c频道:%s", k))
 					return
 				}
 			}
@@ -137,18 +137,18 @@ func (m *MPubSub[T]) listenChannel(channel string) error {
 func (m *MPubSub[T]) handleMessage(msgBytes []byte) {
 	defer func() {
 		if r := recover(); r != nil {
-			m.logger.Error(fmt.Errorf("panic in handle message %v", r))
+			m.logger.Error(fmt.Sprintf("panic in handle message %v", r))
 		}
 	}()
 	var msg Message[T]
 	if err := m.parser.Decoder(msgBytes, &msg); err != nil {
-		m.logger.Error(fmt.Errorf("failed to decode message err: %v", err))
+		m.logger.Error(fmt.Sprintf("failed to decode message err: %v", err))
 		return
 	}
 	if val, ok := m.subGroup.Load(msg.GroupId); ok {
 		subscribers := val.(SubGroupIface[T])
 		if err := subscribers.Write(msg.Data); err != nil {
-			m.logger.Error(fmt.Errorf("failed to write to subGroup %v", err))
+			m.logger.Error(fmt.Sprintf("failed to write to subGroup %v", err))
 		}
 	}
 }

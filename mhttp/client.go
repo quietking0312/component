@@ -6,15 +6,6 @@ import (
 	"time"
 )
 
-// Logger 日志接口，用于解耦对具体日志库的依赖。
-// 使用者可传入 zap.SugaredLogger、logrus、标准库 log 或自定义实现。
-type Logger interface {
-	Debug(msg string, keysAndValues ...any)
-	Info(msg string, keysAndValues ...any)
-	Warn(msg string, keysAndValues ...any)
-	Error(msg string, keysAndValues ...any)
-}
-
 // Client HTTP 客户端封装
 type Client struct {
 	client  *http.Client
@@ -45,6 +36,7 @@ func NewClient(opts ...Option) *Client {
 			},
 		},
 		timeout: 30 * time.Second,
+		logger:  &stdLogLogger{},
 	}
 
 	for _, opt := range opts {

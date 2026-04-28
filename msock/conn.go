@@ -2,6 +2,7 @@ package msock
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -198,7 +199,7 @@ func (c *tcpConn) SetWriteDeadline(t time.Time) error {
 func (c *tcpConn) readLoop() {
 	defer func() {
 		if r := recover(); r != nil {
-			c.server.logger.Errorf("panic in readLoop: %v", r)
+			c.server.logger.Error(fmt.Sprintf("panic in readLoop: %v", r))
 		}
 		c.Close()
 	}()
@@ -210,7 +211,7 @@ func (c *tcpConn) readLoop() {
 
 		if c.server.config.ReadTimeout > 0 {
 			if err := c.SetReadDeadline(time.Now().Add(c.server.config.ReadTimeout)); err != nil {
-				c.server.logger.Warnf("set read deadline error: %v", err)
+				c.server.logger.Warn(fmt.Sprintf("set read deadline error: %v", err))
 				return
 			}
 		}
@@ -219,7 +220,7 @@ func (c *tcpConn) readLoop() {
 		data, err := c.reader.Read()
 		if err != nil {
 			if !c.IsClosed() {
-				c.server.logger.Debugf("read error: %v", err)
+				c.server.logger.Debug(fmt.Sprintf("read error: %v", err))
 			}
 			return
 		}
@@ -228,7 +229,7 @@ func (c *tcpConn) readLoop() {
 		for len(data) > 0 {
 			msg, n, err := c.server.codec.Decode(data)
 			if err != nil {
-				c.server.logger.Errorf("decode error: %v", err)
+				c.server.logger.Error(fmt.Sprintf("decode error: %v", err))
 				return
 			}
 			if n == 0 {
@@ -241,7 +242,7 @@ func (c *tcpConn) readLoop() {
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
-						c.server.logger.Errorf("panic in handler: %v, conn: %s", r, c.ID())
+						c.server.logger.Error(fmt.Sprintf("panic in handler: %v, conn: %s", r, c.ID()))
 					}
 				}()
 				c.server.handleMessage(c, msg)

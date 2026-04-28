@@ -1,6 +1,7 @@
 package msock
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"time"
@@ -17,19 +18,19 @@ type gwsEventHandler struct {
 func (h *gwsEventHandler) OnOpen(socket *gws.Conn) {
 	defer func() {
 		if r := recover(); r != nil {
-			h.server.logger.Errorf("panic in gws OnOpen: %v", r)
+			h.server.logger.Error(fmt.Sprintf("panic in gws OnOpen: %v", r))
 		}
 	}()
 
 	conn := newGWSConn(socket, h.server, h.server.codec)
 	if !h.server.connManager.Add(conn) {
-		h.server.logger.Warnf("max connections reached, reject gws connection from %s", socket.RemoteAddr())
+		h.server.logger.Warn(fmt.Sprintf("max connections reached, reject gws connection from %s", socket.RemoteAddr()))
 		_ = socket.NetConn().Close()
 		return
 	}
 
 	socket.Session().Store("msock_conn", conn)
-	h.server.logger.Infof("gws connection established: %s from %s", conn.ID(), conn.RemoteAddr())
+	h.server.logger.Info(fmt.Sprintf("gws connection established: %s from %s", conn.ID(), conn.RemoteAddr()))
 
 	if h.server.handlers.onConnect != nil {
 		h.server.handlers.onConnect(conn)
@@ -40,7 +41,7 @@ func (h *gwsEventHandler) OnOpen(socket *gws.Conn) {
 func (h *gwsEventHandler) OnClose(socket *gws.Conn, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			h.server.logger.Errorf("panic in gws OnClose: %v", r)
+			h.server.logger.Error(fmt.Sprintf("panic in gws OnClose: %v", r))
 		}
 	}()
 
@@ -52,7 +53,7 @@ func (h *gwsEventHandler) OnClose(socket *gws.Conn, err error) {
 
 	_ = conn.Close()
 	h.server.connManager.Remove(conn.ID())
-	h.server.logger.Infof("gws connection closed: %s", conn.ID())
+	h.server.logger.Info(fmt.Sprintf("gws connection closed: %s", conn.ID()))
 
 	if h.server.handlers.onDisconnect != nil {
 		h.server.handlers.onDisconnect(conn)
@@ -82,7 +83,7 @@ func (h *gwsEventHandler) OnMessage(socket *gws.Conn, message *gws.Message) {
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					h.server.logger.Errorf("panic in handler: %v, conn: %s", r, conn.ID())
+					h.server.logger.Error(fmt.Sprintf("panic in handler: %v, conn: %s", r, conn.ID()))
 				}
 			}()
 			conn.handleBinaryMessage(message.Bytes())
@@ -109,7 +110,7 @@ func (s *Server) runGWSServer() error {
 
 	listener, err := net.Listen("tcp", s.config.Address)
 	if err != nil {
-		s.logger.Errorf("gws listen error: %v", err)
+		s.logger.Error(fmt.Sprintf("gws listen error: %v", err))
 		return ErrListenFailed
 	}
 	s.listener = listener
@@ -118,7 +119,7 @@ func (s *Server) runGWSServer() error {
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		socket, err := upgrader.Upgrade(w, r)
 		if err != nil {
-			s.logger.Errorf("gws upgrade error: %v", err)
+			s.logger.Error(fmt.Sprintf("gws upgrade error: %v", err))
 			return
 		}
 
@@ -126,7 +127,7 @@ func (s *Server) runGWSServer() error {
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
-					s.logger.Errorf("panic in gws readLoop: %v", r)
+					s.logger.Error(fmt.Sprintf("panic in gws readLoop: %v", r))
 				}
 				s.wg.Done()
 			}()
@@ -139,7 +140,7 @@ func (s *Server) runGWSServer() error {
 		Handler: mux,
 	}
 
-	s.logger.Infof("gws server listening on %s/ws", listener.Addr().String())
+	s.logger.Info(fmt.Sprintf("gws server listening on %s/ws", listener.Addr().String()))
 
 	err = s.httpServer.Serve(listener)
 	if err != nil && err != http.ErrServerClosed {

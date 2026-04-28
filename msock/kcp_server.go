@@ -1,6 +1,7 @@
 package msock
 
 import (
+	"fmt"
 	"net"
 	"time"
 
@@ -133,7 +134,7 @@ func (c *kcpConn) SetWriteDeadline(t time.Time) error {
 func (c *kcpConn) readLoop() {
 	defer func() {
 		if r := recover(); r != nil {
-			c.server.logger.Errorf("panic in kcp readLoop: %v", r)
+			c.server.logger.Error(fmt.Sprintf("panic in kcp readLoop: %v", r))
 		}
 		c.Close()
 	}()
@@ -145,7 +146,7 @@ func (c *kcpConn) readLoop() {
 
 		if c.server.config.ReadTimeout > 0 {
 			if err := c.SetReadDeadline(time.Now().Add(c.server.config.ReadTimeout)); err != nil {
-				c.server.logger.Warnf("set read deadline error: %v", err)
+				c.server.logger.Warn(fmt.Sprintf("set read deadline error: %v", err))
 				return
 			}
 		}
@@ -154,7 +155,7 @@ func (c *kcpConn) readLoop() {
 		data, err := c.reader.Read()
 		if err != nil {
 			if !c.IsClosed() {
-				c.server.logger.Debugf("kcp read error: %v", err)
+				c.server.logger.Debug(fmt.Sprintf("kcp read error: %v", err))
 			}
 			return
 		}
@@ -163,7 +164,7 @@ func (c *kcpConn) readLoop() {
 		for len(data) > 0 {
 			msg, n, err := c.server.codec.Decode(data)
 			if err != nil {
-				c.server.logger.Errorf("kcp decode error: %v", err)
+				c.server.logger.Error(fmt.Sprintf("kcp decode error: %v", err))
 				return
 			}
 			if n == 0 {
@@ -175,7 +176,7 @@ func (c *kcpConn) readLoop() {
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
-						c.server.logger.Errorf("panic in handler: %v, conn: %s", r, c.ID())
+						c.server.logger.Error(fmt.Sprintf("panic in handler: %v, conn: %s", r, c.ID()))
 					}
 				}()
 				c.server.handleMessage(c, msg)
@@ -199,14 +200,14 @@ func (s *Server) runKCPServer(config ...*KCPConfig) error {
 		// 使用加密的KCP
 		listener, err = kcp.ListenWithOptions(s.config.Address, nil, 0, 0)
 		if err != nil {
-			s.logger.Errorf("kcp listen error: %v", err)
+			s.logger.Error(fmt.Sprintf("kcp listen error: %v", err))
 			return ErrListenFailed
 		}
 	} else {
 		// 不使用加密的KCP
 		listener, err = kcp.Listen(s.config.Address)
 		if err != nil {
-			s.logger.Errorf("kcp listen error: %v", err)
+			s.logger.Error(fmt.Sprintf("kcp listen error: %v", err))
 			return ErrListenFailed
 		}
 	}
@@ -218,7 +219,7 @@ func (s *Server) runKCPServer(config ...*KCPConfig) error {
 	}
 
 	s.listener = listener
-	s.logger.Infof("kcp server listening on %s", s.config.Address)
+	s.logger.Info(fmt.Sprintf("kcp server listening on %s", s.config.Address))
 
 	return s.acceptKCPLoop()
 }
@@ -235,7 +236,7 @@ func (s *Server) acceptKCPLoop() error {
 			if s.isClosed() {
 				return ErrServerClosed
 			}
-			s.logger.Errorf("kcp accept error: %v", err)
+			s.logger.Error(fmt.Sprintf("kcp accept error: %v", err))
 			if s.handlers.onError != nil {
 				s.handlers.onError(nil, err)
 			}
@@ -263,13 +264,13 @@ func (s *Server) handleKCPConn(netConn net.Conn) {
 
 	// 添加到连接管理器
 	if !s.connManager.Add(conn) {
-		s.logger.Warnf("max connections reached, reject kcp connection from %s", netConn.RemoteAddr())
+		s.logger.Warn(fmt.Sprintf("max connections reached, reject kcp connection from %s", netConn.RemoteAddr()))
 		netConn.Close()
 		return
 	}
 	defer s.connManager.Remove(conn.ID())
 
-	s.logger.Infof("kcp connection established: %s from %s", conn.ID(), conn.RemoteAddr())
+	s.logger.Info(fmt.Sprintf("kcp connection established: %s from %s", conn.ID(), conn.RemoteAddr()))
 
 	// 触发连接建立回调
 	if s.handlers.onConnect != nil {
@@ -280,7 +281,7 @@ func (s *Server) handleKCPConn(netConn net.Conn) {
 	conn.readLoop()
 
 	// 连接断开
-	s.logger.Infof("kcp connection closed: %s", conn.ID())
+	s.logger.Info(fmt.Sprintf("kcp connection closed: %s", conn.ID()))
 
 	// 触发连接断开回调
 	if s.handlers.onDisconnect != nil {

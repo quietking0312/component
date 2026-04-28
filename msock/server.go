@@ -2,6 +2,7 @@ package msock
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"sync"
@@ -99,12 +100,12 @@ func (s *Server) Run() error {
 func (s *Server) runTCP() error {
 	listener, err := net.Listen("tcp", s.config.Address)
 	if err != nil {
-		s.logger.Errorf("tcp listen error: %v", err)
+		s.logger.Error(fmt.Sprintf("tcp listen error: %v", err))
 		return ErrListenFailed
 	}
 	s.listener = listener
 
-	s.logger.Infof("tcp server listening on %s", s.config.Address)
+	s.logger.Info(fmt.Sprintf("tcp server listening on %s", s.config.Address))
 
 	return s.acceptLoop()
 }
@@ -131,7 +132,7 @@ func (s *Server) acceptLoop() error {
 			if s.isClosed() {
 				return ErrServerClosed
 			}
-			s.logger.Errorf("accept error: %v", err)
+			s.logger.Error(fmt.Sprintf("accept error: %v", err))
 			if s.handlers.onError != nil {
 				s.handlers.onError(nil, err)
 			}
@@ -152,13 +153,13 @@ func (s *Server) handleConn(netConn net.Conn) {
 
 	// 添加到连接管理器
 	if !s.connManager.Add(conn) {
-		s.logger.Warnf("max connections reached, reject connection from %s", netConn.RemoteAddr())
+		s.logger.Warn(fmt.Sprintf("max connections reached, reject connection from %s", netConn.RemoteAddr()))
 		netConn.Close()
 		return
 	}
 	defer s.connManager.Remove(conn.ID())
 
-	s.logger.Infof("connection established: %s from %s", conn.ID(), conn.RemoteAddr())
+	s.logger.Info(fmt.Sprintf("connection established: %s from %s", conn.ID(), conn.RemoteAddr()))
 
 	// 触发连接建立回调
 	if s.handlers.onConnect != nil {
@@ -169,7 +170,7 @@ func (s *Server) handleConn(netConn net.Conn) {
 	conn.readLoop()
 
 	// 连接断开
-	s.logger.Infof("connection closed: %s", conn.ID())
+	s.logger.Info(fmt.Sprintf("connection closed: %s", conn.ID()))
 
 	// 触发连接断开回调
 	if s.handlers.onDisconnect != nil {
@@ -180,7 +181,7 @@ func (s *Server) handleConn(netConn net.Conn) {
 // handleMessage 处理消息
 func (s *Server) handleMessage(conn Conn, msg Message) {
 	if s.router == nil {
-		s.logger.Warnf("router not set, dropping message from %s", conn.ID())
+		s.logger.Warn(fmt.Sprintf("router not set, dropping message from %s", conn.ID()))
 		return
 	}
 
@@ -194,7 +195,7 @@ func (s *Server) Stop() error {
 		return nil
 	}
 
-	s.logger.Infof("stopping server...")
+	s.logger.Info(fmt.Sprintf("stopping server..."))
 
 	// 关闭监听器
 	if s.listener != nil {
@@ -212,7 +213,7 @@ func (s *Server) Stop() error {
 	// 等待所有goroutine完成
 	s.wg.Wait()
 
-	s.logger.Infof("server stopped")
+	s.logger.Info(fmt.Sprintf("server stopped"))
 	return nil
 }
 
@@ -244,7 +245,7 @@ func (s *Server) SendTo(connID string, msg Message) error {
 func (s *Server) Broadcast(msg Message) {
 	data, err := s.codec.Encode(msg)
 	if err != nil {
-		s.logger.Errorf("broadcast encode error: %v", err)
+		s.logger.Error(fmt.Sprintf("broadcast encode error: %v", err))
 		return
 	}
 	s.connManager.BroadcastBytes(data)

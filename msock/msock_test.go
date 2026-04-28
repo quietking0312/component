@@ -525,26 +525,26 @@ type testLogger struct {
 	mu     sync.Mutex
 }
 
-func (l *testLogger) Debugf(format string, args ...interface{}) {
+func (l *testLogger) Debug(msg string, args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.debugs = append(l.debugs, fmt.Sprintf(format, args...))
+	l.debugs = append(l.debugs, fmt.Sprintf(msg, args...))
 }
 
-func (l *testLogger) Infof(format string, args ...interface{}) {
+func (l *testLogger) Info(msg string, args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.infos = append(l.infos, fmt.Sprintf(format, args...))
+	l.infos = append(l.infos, fmt.Sprintf(msg, args...))
 }
 
-func (l *testLogger) Warnf(format string, args ...interface{}) {
+func (l *testLogger) Warn(msg string, args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.warns = append(l.warns, fmt.Sprintf(format, args...))
+	l.warns = append(l.warns, fmt.Sprintf(msg, args...))
 }
 
-func (l *testLogger) Errorf(format string, args ...interface{}) {
+func (l *testLogger) Error(msg string, args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.errors = append(l.errors, fmt.Sprintf(format, args...))
+	l.errors = append(l.errors, fmt.Sprintf(msg, args...))
 }

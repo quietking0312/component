@@ -1,12 +1,9 @@
-package mpubsub
+package mhttp
 
-import (
-	"log"
-	"sync/atomic"
-	"time"
-)
+import "log"
 
 // Logger 日志接口，统一使用 slog 风格。
+// 业务方可传入 *slog.Logger、zap.SugaredLogger、logrus 或任意自定义实现。
 type Logger interface {
 	Debug(msg string, args ...any)
 	Info(msg string, args ...any)
@@ -22,22 +19,12 @@ func (s *stdLogLogger) Info(msg string, args ...any)  { log.Println(append([]any
 func (s *stdLogLogger) Warn(msg string, args ...any)  { log.Println(append([]any{"[WARN]", msg}, args...)...) }
 func (s *stdLogLogger) Error(msg string, args ...any) { log.Println(append([]any{"[ERROR]", msg}, args...)...) }
 
-var _log Logger = &stdLogLogger{}
+// NopLogger 返回一个空的 Logger，用于关闭日志或单元测试。
+func NopLogger() Logger { return &nopLogger{} }
 
-type Metrics struct {
-	ActiveWorkers atomic.Int64 // 活跃worker 数
-}
+type nopLogger struct{}
 
-type SubGroupOption struct {
-	WorkNum    int           // 任务数量 启用的协程分发数量 最低 1
-	MinWorkers int           // 最小协程数
-	MaxWorkers int           // 最大协程数
-	RetryCount int           // 重试次数
-	RetryDelay time.Duration // 重试间隔
-}
-
-func WithSubGroupConfig[T any](config SubGroupOption) ChannelOption[T] {
-	return func(g *SubGroup[T]) {
-		g.config = config
-	}
-}
+func (n *nopLogger) Debug(string, ...any) {}
+func (n *nopLogger) Info(string, ...any)  {}
+func (n *nopLogger) Warn(string, ...any)  {}
+func (n *nopLogger) Error(string, ...any) {}

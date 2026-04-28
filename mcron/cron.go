@@ -5,6 +5,7 @@ package mcron
 import (
 	"context"
 	"fmt"
+	"log"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -12,14 +13,22 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
-// Logger 日志接口，用于解耦对具体日志库的依赖。
-// 使用者可传入 zap.SugaredLogger、logrus、标准库 log 或自定义实现。
+// Logger 日志接口，统一使用 slog 风格。
+// 业务方可传入 *slog.Logger、zap.SugaredLogger、logrus 或任意自定义实现。
 type Logger interface {
-	Debug(msg string, keysAndValues ...any)
-	Info(msg string, keysAndValues ...any)
-	Warn(msg string, keysAndValues ...any)
-	Error(msg string, keysAndValues ...any)
+	Debug(msg string, args ...any)
+	Info(msg string, args ...any)
+	Warn(msg string, args ...any)
+	Error(msg string, args ...any)
 }
+
+// stdLogLogger 默认使用标准库 log 输出。
+type stdLogLogger struct{}
+
+func (s *stdLogLogger) Debug(msg string, args ...any) { log.Println(append([]any{"[DEBUG]", msg}, args...)...) }
+func (s *stdLogLogger) Info(msg string, args ...any)  { log.Println(append([]any{"[INFO]", msg}, args...)...) }
+func (s *stdLogLogger) Warn(msg string, args ...any)  { log.Println(append([]any{"[WARN]", msg}, args...)...) }
+func (s *stdLogLogger) Error(msg string, args ...any) { log.Println(append([]any{"[ERROR]", msg}, args...)...) }
 
 // contextKey 用于 context.WithValue 的私有类型，避免与其他包冲突
 type contextKey string
@@ -134,9 +143,7 @@ func WithLogger(logger Logger) Option {
 func New(opts ...Option) *Cron {
 	options := &Options{
 		Location: time.Local,
-		// 默认不设置 logger，避免硬编码依赖 mlog 模块。
-		// 如需日志，可通过 WithLogger 注入 *zap.Logger。
-		Logger: nil,
+		Logger: &stdLogLogger{},
 	}
 
 	for _, opt := range opts {
@@ -356,20 +363,12 @@ func (w *jobWrapper) Run() {
 	w.cron.executeJob(w.entry)
 }
 
-// logInfo 安全地记录 Info 级别日志。
-// 如果 logger 为 nil（未注入），则跳过日志记录，避免 panic。
 func (c *Cron) logInfo(msg string, keysAndValues ...any) {
-	if c.logger != nil {
-		c.logger.Info(msg, keysAndValues...)
-	}
+	c.logger.Info(msg, keysAndValues...)
 }
 
-// logError 安全地记录 Error 级别日志。
-// 如果 logger 为 nil（未注入），则跳过日志记录，避免 panic。
 func (c *Cron) logError(msg string, keysAndValues ...any) {
-	if c.logger != nil {
-		c.logger.Error(msg, keysAndValues...)
-	}
+	c.logger.Error(msg, keysAndValues...)
 }
 
 // cronLogger 适配 cron 的日志接口

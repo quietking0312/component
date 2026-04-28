@@ -66,7 +66,7 @@ type SubGroup[T any] struct {
 	closeChan chan struct{}
 	closed    atomic.Bool
 	wg        sync.WaitGroup
-	logger    LoggerIface
+	logger    Logger
 	config    SubGroupOption
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -78,7 +78,7 @@ type SubGroup[T any] struct {
 
 type ChannelOption[T any] func(group *SubGroup[T])
 
-func WithSubGroupLogger[T any](logger LoggerIface) ChannelOption[T] {
+func WithSubGroupLogger[T any](logger Logger) ChannelOption[T] {
 	return func(g *SubGroup[T]) {
 		g.logger = logger
 	}
@@ -191,7 +191,7 @@ func (c *SubGroup[T]) Write(m T) error {
 	case c.msgChan <- m:
 		return nil
 	case <-time.After(20 * time.Second):
-		c.logger.Error(fmt.Errorf("writeTimeout %v", c.id))
+		c.logger.Error(fmt.Sprintf("writeTimeout %v", c.id))
 		return fmt.Errorf("writeTimeout")
 
 	}
@@ -288,7 +288,7 @@ func (c *SubGroup[T]) writeToSubscriber(writer HandlerIface[T], msg T) {
 		}
 		return
 	}
-	c.logger.Error(fmt.Errorf("write err:%v", lastErr))
+	c.logger.Error(fmt.Sprintf("write err:%v", lastErr))
 	c.group.Delete(writer.ID())
 }
 
@@ -316,7 +316,7 @@ func (c *SubGroup[T]) Close() error {
 		c.logger.Info(fmt.Sprintf("subGroup closed %s", c.id))
 		return nil
 	case <-time.After(10 * time.Second):
-		c.logger.Error(fmt.Errorf("shutdown timeout %s", c.id))
+		c.logger.Error(fmt.Sprintf("shutdown timeout %s", c.id))
 		return fmt.Errorf("shutdown timeout")
 	}
 }

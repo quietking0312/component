@@ -70,29 +70,29 @@ type Codec interface {
 // Handler 消息处理器
 type Handler func(conn Conn, msg Message)
 
-// Logger 日志接口，允许自定义日志输出
+// Logger 日志接口，统一使用 slog 风格。
 type Logger interface {
-	Debugf(format string, args ...interface{})
-	Infof(format string, args ...interface{})
-	Warnf(format string, args ...interface{})
-	Errorf(format string, args ...interface{})
+	Debug(msg string, args ...any)
+	Info(msg string, args ...any)
+	Warn(msg string, args ...any)
+	Error(msg string, args ...any)
 }
 
 // defaultLogger 默认日志实现（使用标准库)
 type defaultLogger struct{}
 
-func (l *defaultLogger) Debugf(format string, args ...interface{}) {}
-func (l *defaultLogger) Infof(format string, args ...interface{})  {}
-func (l *defaultLogger) Warnf(format string, args ...interface{})  {}
-func (l *defaultLogger) Errorf(format string, args ...interface{}) {}
+func (l *defaultLogger) Debug(msg string, args ...any) {}
+func (l *defaultLogger) Info(msg string, args ...any)  {}
+func (l *defaultLogger) Warn(msg string, args ...any)  {}
+func (l *defaultLogger) Error(msg string, args ...any) {}
 
 // nopLogger 空日志实现
 type nopLogger struct{}
 
-func (l *nopLogger) Debugf(format string, args ...interface{}) {}
-func (l *nopLogger) Infof(format string, args ...interface{})  {}
-func (l *nopLogger) Warnf(format string, args ...interface{})  {}
-func (l *nopLogger) Errorf(format string, args ...interface{}) {}
+func (l *nopLogger) Debug(msg string, args ...any) {}
+func (l *nopLogger) Info(msg string, args ...any)  {}
+func (l *nopLogger) Warn(msg string, args ...any)  {}
+func (l *nopLogger) Error(msg string, args ...any) {}
 
 // ServerOption 服务器配置选项
 type ServerOption func(*ServerConfig)

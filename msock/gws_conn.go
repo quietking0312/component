@@ -1,6 +1,7 @@
 package msock
 
 import (
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -124,7 +125,7 @@ func (c *gwsConn) handleBinaryMessage(data []byte) {
 		msg, n, err := c.codec.Decode(data)
 		if err != nil {
 			if c.server != nil {
-				c.server.logger.Errorf("decode error: %v", err)
+				c.server.logger.Error(fmt.Sprintf("decode error: %v", err))
 			}
 			return
 		}

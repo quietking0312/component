@@ -159,25 +159,20 @@ func (r *Request) Do() (*Response, error) {
 	// 记录日志
 	duration := time.Since(start)
 	if err != nil {
-		// 通过 Logger 接口注入记录日志，不绑定任何具体日志库
-		if r.client.logger != nil {
-			r.client.logger.Error("http request failed",
-				"method", r.method,
-				"url", reqURL,
-				"duration", duration,
-				"error", err,
-			)
-		}
-		return nil, err
-	}
-	if r.client.logger != nil {
-		r.client.logger.Info("http request completed",
+		r.client.logger.Error("http request failed",
 			"method", r.method,
 			"url", reqURL,
 			"duration", duration,
-			"status", resp.StatusCode(),
+			"error", err,
 		)
+		return nil, err
 	}
+	r.client.logger.Info("http request completed",
+		"method", r.method,
+		"url", reqURL,
+		"duration", duration,
+		"status", resp.StatusCode(),
+	)
 
 	return resp, nil
 }

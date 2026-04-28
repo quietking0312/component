@@ -6,20 +6,28 @@ import (
 	"container/list"
 	"context"
 	"fmt"
+	"log"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-// Logger 日志接口，用于解耦对具体日志库的依赖。
-// 使用者可传入 zap.SugaredLogger、logrus、标准库 log 或自定义实现。
+// Logger 日志接口，统一使用 slog 风格。
 type Logger interface {
-	Debug(msg string, keysAndValues ...any)
-	Info(msg string, keysAndValues ...any)
-	Warn(msg string, keysAndValues ...any)
-	Error(msg string, keysAndValues ...any)
+	Debug(msg string, args ...any)
+	Info(msg string, args ...any)
+	Warn(msg string, args ...any)
+	Error(msg string, args ...any)
 }
+
+// stdLogLogger 默认使用标准库 log 输出。
+type stdLogLogger struct{}
+
+func (s *stdLogLogger) Debug(msg string, args ...any) { log.Println(append([]any{"[DEBUG]", msg}, args...)...) }
+func (s *stdLogLogger) Info(msg string, args ...any)  { log.Println(append([]any{"[INFO]", msg}, args...)...) }
+func (s *stdLogLogger) Warn(msg string, args ...any)  { log.Println(append([]any{"[WARN]", msg}, args...)...) }
+func (s *stdLogLogger) Error(msg string, args ...any) { log.Println(append([]any{"[ERROR]", msg}, args...)...) }
 
 // Task 延迟任务
 type Task struct {
@@ -143,6 +151,9 @@ func New(opts ...Option) *TimeWheel {
 		cancel:         cancel,
 		logger:         options.Logger,
 	}
+	if tw.logger == nil {
+		tw.logger = &stdLogLogger{}
+	}
 
 	// 初始化槽位
 	for i := 0; i < options.WheelSize; i++ {
@@ -152,36 +163,20 @@ func New(opts ...Option) *TimeWheel {
 	return tw
 }
 
-// logInfo 安全地记录 Info 级别日志。
-// 如果 logger 为 nil（未注入），则跳过日志记录，避免 panic。
 func (tw *TimeWheel) logInfo(msg string, keysAndValues ...any) {
-	if tw.logger != nil {
-		tw.logger.Info(msg, keysAndValues...)
-	}
+	tw.logger.Info(msg, keysAndValues...)
 }
 
-// logDebug 安全地记录 Debug 级别日志。
-// 如果 logger 为 nil（未注入），则跳过日志记录，避免 panic。
 func (tw *TimeWheel) logDebug(msg string, keysAndValues ...any) {
-	if tw.logger != nil {
-		tw.logger.Debug(msg, keysAndValues...)
-	}
+	tw.logger.Debug(msg, keysAndValues...)
 }
 
-// logError 安全地记录 Error 级别日志。
-// 如果 logger 为 nil（未注入），则跳过日志记录，避免 panic。
 func (tw *TimeWheel) logError(msg string, keysAndValues ...any) {
-	if tw.logger != nil {
-		tw.logger.Error(msg, keysAndValues...)
-	}
+	tw.logger.Error(msg, keysAndValues...)
 }
 
-// logInfo 安全地记录 Info 级别日志。
-// 如果 logger 为 nil（未注入），则跳过日志记录，避免 panic。
 func (htw *HierarchicalTimeWheel) logInfo(msg string, keysAndValues ...any) {
-	if htw.logger != nil {
-		htw.logger.Info(msg, keysAndValues...)
-	}
+	htw.logger.Info(msg, keysAndValues...)
 }
 
 // Start 启动时间轮
@@ -522,6 +517,7 @@ func NewHierarchical() *HierarchicalTimeWheel {
 		wheels: make([]*TimeWheel, 4),
 		ctx:    ctx,
 		cancel: cancel,
+		logger: &stdLogLogger{},
 	}
 
 	// 创建各级时间轮
