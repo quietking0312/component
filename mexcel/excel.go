@@ -57,6 +57,7 @@
 package mexcel
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -174,6 +175,24 @@ func valueToString(v reflect.Value) (string, error) {
 		return strconv.FormatFloat(v.Float(), 'f', -1, 64), nil
 	case reflect.Bool:
 		return strconv.FormatBool(v.Bool()), nil
+	case reflect.Slice, reflect.Array:
+		if v.Kind() == reflect.Slice && v.IsNil() {
+			return "", nil
+		}
+		b, err := json.Marshal(v.Interface())
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
+	case reflect.Map:
+		if v.IsNil() {
+			return "", nil
+		}
+		b, err := json.Marshal(v.Interface())
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
 	default:
 		// 处理指针
 		if v.Kind() == reflect.Ptr {
@@ -240,6 +259,24 @@ func stringToValue(s string, t reflect.Type) (reflect.Value, error) {
 	case reflect.Bool:
 		b, err := strconv.ParseBool(s)
 		return reflect.ValueOf(b), err
+	case reflect.Slice, reflect.Array:
+		if s == "" {
+			return reflect.Zero(t), nil
+		}
+		ptr := reflect.New(t)
+		if err := json.Unmarshal([]byte(s), ptr.Interface()); err != nil {
+			return reflect.Value{}, err
+		}
+		return ptr.Elem(), nil
+	case reflect.Map:
+		if s == "" {
+			return reflect.Zero(t), nil
+		}
+		ptr := reflect.New(t)
+		if err := json.Unmarshal([]byte(s), ptr.Interface()); err != nil {
+			return reflect.Value{}, err
+		}
+		return ptr.Elem(), nil
 	default:
 		// 处理指针
 		if t.Kind() == reflect.Ptr {

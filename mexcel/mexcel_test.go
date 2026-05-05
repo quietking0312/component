@@ -378,6 +378,12 @@ func TestValueToString(t *testing.T) {
 		{"int64", int64(9223372036854775807), "9223372036854775807"},
 		{"float64", 3.14159, "3.14159"},
 		{"bool", true, "true"},
+		{"slice", []int{1, 2, 3}, "[1,2,3]"},
+		{"slice_empty", []int{}, "[]"},
+		{"slice_nil", []int(nil), ""},
+		{"array", [3]int{1, 2, 3}, "[1,2,3]"},
+		{"map", map[string]int{"a": 1, "b": 2}, `{"a":1,"b":2}`},
+		{"map_nil", map[string]int(nil), ""},
 	}
 
 	for _, tt := range tests {
@@ -402,6 +408,10 @@ func TestStringToValue(t *testing.T) {
 		{"int64", "9223372036854775807", reflect.TypeOf(int64(0)), int64(9223372036854775807)},
 		{"float64", "3.14159", reflect.TypeOf(float64(0)), 3.14159},
 		{"bool", "true", reflect.TypeOf(true), true},
+		{"slice", "[1,2,3]", reflect.TypeOf([]int{}), []int{1, 2, 3}},
+		{"slice_empty", "", reflect.TypeOf([]int{}), []int(nil)},
+		{"map", `{"a":1,"b":2}`, reflect.TypeOf(map[string]int{}), map[string]int{"a": 1, "b": 2}},
+		{"map_empty", "", reflect.TypeOf(map[string]int{}), map[string]int(nil)},
 	}
 
 	for _, tt := range tests {
