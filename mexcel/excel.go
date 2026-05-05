@@ -263,7 +263,6 @@ func stringToValue(s string, t reflect.Type) (reflect.Value, error) {
 		if s == "" {
 			return reflect.Zero(t), nil
 		}
-		ptr := reflect.New(t)
 		if err := json.Unmarshal([]byte(s), ptr.Interface()); err != nil {
 			return reflect.Value{}, err
 		}
@@ -272,7 +271,6 @@ func stringToValue(s string, t reflect.Type) (reflect.Value, error) {
 		if s == "" {
 			return reflect.Zero(t), nil
 		}
-		ptr := reflect.New(t)
 		if err := json.Unmarshal([]byte(s), ptr.Interface()); err != nil {
 			return reflect.Value{}, err
 		}
