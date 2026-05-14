@@ -164,9 +164,13 @@ func (c *tcpConn) sendLoop() {
 			writeTimeout = c.server.config.WriteTimeout
 		}
 		if err := c.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
-			continue
+			c.Close()
+			return
 		}
-		_, _ = c.Conn.Write(data)
+		if _, err := c.Conn.Write(data); err != nil {
+			c.Close()
+			return
+		}
 	}
 }
 
@@ -254,10 +258,9 @@ func (c *tcpConn) readLoop() {
 
 // bufferedReader 带缓冲的读取器
 type bufferedReader struct {
-	conn   net.Conn
-	buffer []byte
-	start  int
-	end    int
+	conn    net.Conn
+	buffer  []byte
+	pending []byte // Unread 放回的数据
 }
 
 // newBufferedReader 创建缓冲读取器
@@ -268,42 +271,29 @@ func newBufferedReader(conn net.Conn, size int) *bufferedReader {
 	}
 }
 
-// Read 读取数据
+// Read 读取数据，优先返回 Unread 放回的数据
 func (r *bufferedReader) Read() ([]byte, error) {
-	// 如果缓冲区有未处理的数据
-	if r.start < r.end {
-		data := make([]byte, r.end-r.start)
-		copy(data, r.buffer[r.start:r.end])
-		r.start = r.end
+	if len(r.pending) > 0 {
+		data := r.pending
+		r.pending = nil
 		return data, nil
 	}
 
-	// 从连接读取
-	r.start = 0
-	r.end = 0
 	n, err := r.conn.Read(r.buffer)
 	if err != nil {
 		return nil, err
 	}
-	r.end = n
 
 	data := make([]byte, n)
 	copy(data, r.buffer[:n])
 	return data, nil
 }
 
-// Unread 将数据放回缓冲区
+// Unread 将未消费的数据放回，下次 Read 时优先返回
 func (r *bufferedReader) Unread(data []byte) {
-	// 简单实现：将数据复制到缓冲区开头
-	// 实际生产环境可能需要更复杂的环形缓冲区
-	if len(data) > len(r.buffer) {
-		// 数据太大，扩展缓冲区
-		r.buffer = append(data, r.buffer...)
-	} else {
-		copy(r.buffer, data)
-	}
-	r.start = 0
-	r.end = len(data)
+	buf := make([]byte, len(data))
+	copy(buf, data)
+	r.pending = buf
 }
 
 // ConnManager 连接管理器

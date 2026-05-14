@@ -95,8 +95,12 @@ func (c *wsConn) sendLoop() {
 		}
 		c.writeMu.Lock()
 		c.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-		_ = c.conn.WriteMessage(websocket.BinaryMessage, data)
+		err := c.conn.WriteMessage(websocket.BinaryMessage, data)
 		c.writeMu.Unlock()
+		if err != nil {
+			c.Close()
+			return
+		}
 	}
 }
 
@@ -109,9 +113,11 @@ func (c *wsConn) SendText(text string) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 
-	if c.server.config.WriteTimeout > 0 {
-		c.conn.SetWriteDeadline(time.Now().Add(c.server.config.WriteTimeout))
+	writeTimeout := 10 * time.Second
+	if c.server != nil && c.server.config.WriteTimeout > 0 {
+		writeTimeout = c.server.config.WriteTimeout
 	}
+	c.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 
 	return c.conn.WriteMessage(websocket.TextMessage, []byte(text))
 }
@@ -182,8 +188,14 @@ func (c *wsConn) readLoop() {
 				c.handleBinaryMessage(data)
 			}()
 		case websocket.TextMessage:
-			// 处理文本消息
-			c.handleTextMessage(data)
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						c.server.logger.Error(fmt.Sprintf("panic in handler: %v, conn: %s", r, c.ID()))
+					}
+				}()
+				c.handleTextMessage(data)
+			}()
 		case websocket.PingMessage:
 			// 自动回复pong
 			c.writeMu.Lock()
@@ -260,7 +272,7 @@ func (s *Server) handleWSConn(wsConnObj *websocket.Conn) {
 	// 添加到连接管理器
 	if !s.connManager.Add(conn) {
 		s.logger.Warn(fmt.Sprintf("max connections reached, reject websocket connection from %s", wsConnObj.RemoteAddr()))
-		wsConnObj.Close()
+		_ = wsConnObj.Close()
 		return
 	}
 	defer s.connManager.Remove(conn.ID())

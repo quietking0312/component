@@ -3,6 +3,8 @@ package msock
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // Router 消息路由器
@@ -44,14 +46,18 @@ func (r *Router) RegisterMultiple(handlers map[uint32]Handler) {
 func (r *Router) Get(routeID uint32) Handler {
 	r.mu.RLock()
 	handler, ok := r.handlers[routeID]
+	chains := make([]Middleware, len(r.chains))
+	copy(chains, r.chains)
 	r.mu.RUnlock()
 
 	if !ok {
-		return r.notFound
+		handler = r.notFound
 	}
 
-	// 应用中间件链
-	return r.applyMiddleware(handler)
+	for i := len(chains) - 1; i >= 0; i-- {
+		handler = chains[i](handler)
+	}
+	return handler
 }
 
 // Remove 移除指定路由ID的处理器
@@ -73,15 +79,6 @@ func (r *Router) SetNotFoundHandler(handler Handler) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.notFound = handler
-}
-
-// applyMiddleware 将中间件链应用到处理器
-func (r *Router) applyMiddleware(handler Handler) Handler {
-	// 从后往前应用中间件
-	for i := len(r.chains) - 1; i >= 0; i-- {
-		handler = r.chains[i](handler)
-	}
-	return handler
 }
 
 // Handle 处理消息
@@ -214,37 +211,29 @@ func Validate(validateFunc func(msg Message) error, logger Logger) Middleware {
 	}
 }
 
-// RateLimit 限流中间件（简单计数器实现，生产环境建议使用令牌桶）
+// RateLimit 限流中间件，按连接统计请求数，连接断开后自动清理计数器
 func RateLimit(maxRequests int, logger Logger) Middleware {
-	type limiter struct {
-		count int
-		mu    sync.Mutex
+	type entry struct {
+		counter atomic.Int64
 	}
-
-	limiters := make(map[string]*limiter)
-	var limitersMu sync.RWMutex
+	var limiters sync.Map // map[connID string]*entry
 
 	return func(next Handler) Handler {
 		return func(conn Conn, msg Message) {
 			connID := conn.ID()
 
-			limitersMu.RLock()
-			l, ok := limiters[connID]
-			limitersMu.RUnlock()
+			val, loaded := limiters.LoadOrStore(connID, &entry{})
+			e := val.(*entry)
 
-			if !ok {
-				l = &limiter{}
-				limitersMu.Lock()
-				limiters[connID] = l
-				limitersMu.Unlock()
+			if !loaded {
+				go func() {
+					<-conn.Context().Done()
+					limiters.Delete(connID)
+				}()
 			}
 
-			l.mu.Lock()
-			l.count++
-			current := l.count
-			l.mu.Unlock()
-
-			if current > maxRequests {
+			current := e.counter.Add(1)
+			if int(current) > maxRequests {
 				if logger != nil {
 					logger.Warn(fmt.Sprintf("rate limit exceeded, conn: %s", connID))
 				}
@@ -256,11 +245,13 @@ func RateLimit(maxRequests int, logger Logger) Middleware {
 	}
 }
 
-// Timeout 超时中间件
-func Timeout(timeoutFn func(), logger Logger) Middleware {
+// Timeout 超时中间件，handler 执行超过 d 时触发 timeoutFn 回调。
+// 注意：Go 无法强制中断正在执行的 goroutine，超时后 handler goroutine
+// 仍会继续运行直到自然结束，timeoutFn 仅作为超时通知使用。
+func Timeout(d time.Duration, timeoutFn func(), logger Logger) Middleware {
 	return func(next Handler) Handler {
 		return func(conn Conn, msg Message) {
-			done := make(chan struct{})
+			done := make(chan struct{}, 1)
 			go func() {
 				defer close(done)
 				next(conn, msg)
@@ -268,7 +259,7 @@ func Timeout(timeoutFn func(), logger Logger) Middleware {
 
 			select {
 			case <-done:
-			case <-conn.Context().Done():
+			case <-time.After(d):
 				if logger != nil {
 					logger.Warn(fmt.Sprintf("handler timeout, conn: %s", conn.ID()))
 				}

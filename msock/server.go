@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // Server 网络服务器
@@ -154,7 +155,7 @@ func (s *Server) handleConn(netConn net.Conn) {
 	// 添加到连接管理器
 	if !s.connManager.Add(conn) {
 		s.logger.Warn(fmt.Sprintf("max connections reached, reject connection from %s", netConn.RemoteAddr()))
-		netConn.Close()
+		_ = netConn.Close()
 		return
 	}
 	defer s.connManager.Remove(conn.ID())
@@ -204,7 +205,9 @@ func (s *Server) Stop() error {
 
 	// 关闭HTTP服务器
 	if s.httpServer != nil {
-		s.httpServer.Shutdown(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.httpServer.Shutdown(ctx)
 	}
 
 	// 关闭所有连接

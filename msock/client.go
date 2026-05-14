@@ -57,8 +57,15 @@ func (c *Client) SetCodec(codec Codec) {
 	c.codec = codec
 }
 
-// Connect 连接到服务器
+// Connect 连接到服务器，若已有连接则先关闭
 func (c *Client) Connect(addr string) error {
+	c.mu.Lock()
+	if c.conn != nil {
+		c.conn.Close()
+		c.conn = nil
+	}
+	c.mu.Unlock()
+
 	switch c.config.ConnType {
 	case ConnTypeTCP:
 		return c.connectTCP(addr)
@@ -234,18 +241,24 @@ func (c *Client) connectKCP(addr string) error {
 
 // Send 发送消息
 func (c *Client) Send(msg Message) error {
-	if c.conn == nil {
+	c.mu.RLock()
+	conn := c.conn
+	c.mu.RUnlock()
+	if conn == nil {
 		return ErrConnClosed
 	}
-	return c.conn.Send(msg)
+	return conn.Send(msg)
 }
 
 // SendBytes 发送原始字节
 func (c *Client) SendBytes(data []byte) error {
-	if c.conn == nil {
+	c.mu.RLock()
+	conn := c.conn
+	c.mu.RUnlock()
+	if conn == nil {
 		return ErrConnClosed
 	}
-	return c.conn.SendBytes(data)
+	return conn.SendBytes(data)
 }
 
 // Close 关闭连接
@@ -463,9 +476,23 @@ func (h *gwsClientEventHandler) OnMessage(socket *gws.Conn, message *gws.Message
 
 	switch message.Opcode {
 	case gws.OpcodeBinary:
-		conn.handleBinaryMessage(message.Bytes())
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					h.client.logger.Error(fmt.Sprintf("panic in handler: %v", r))
+				}
+			}()
+			conn.handleBinaryMessage(message.Bytes())
+		}()
 	case gws.OpcodeText:
-		conn.handleTextMessage(message.Bytes())
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					h.client.logger.Error(fmt.Sprintf("panic in handler: %v", r))
+				}
+			}()
+			conn.handleTextMessage(message.Bytes())
+		}()
 	}
 }
 

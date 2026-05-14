@@ -71,8 +71,12 @@ func (c *gwsConn) sendLoop() {
 		}
 		c.writeMu.Lock()
 		c.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-		_ = c.conn.WriteMessage(gws.OpcodeBinary, data)
+		err := c.conn.WriteMessage(gws.OpcodeBinary, data)
 		c.writeMu.Unlock()
+		if err != nil {
+			c.Close()
+			return
+		}
 	}
 }
 

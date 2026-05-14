@@ -4,6 +4,7 @@
 package msock
 
 import (
+	"fmt"
 	"log"
 )
 
@@ -17,17 +18,17 @@ func NewStdLogger() Logger {
 }
 
 func (l *StdLogger) Debug(msg string, args ...any) {
-	log.Printf("[DEBUG] "+msg, args...)
+	log.Printf("[DEBUG] %s", fmt.Sprintf(msg, args...))
 }
 
 func (l *StdLogger) Info(msg string, args ...any) {
-	log.Printf("[INFO] "+msg, args...)
+	log.Printf("[INFO] %s", fmt.Sprintf(msg, args...))
 }
 
 func (l *StdLogger) Warn(msg string, args ...any) {
-	log.Printf("[WARN] "+msg, args...)
+	log.Printf("[WARN] %s", fmt.Sprintf(msg, args...))
 }
 
 func (l *StdLogger) Error(msg string, args ...any) {
-	log.Printf("[ERROR] "+msg, args...)
+	log.Printf("[ERROR] %s", fmt.Sprintf(msg, args...))
 }

@@ -99,9 +99,13 @@ func (c *kcpConn) sendLoop() {
 			writeTimeout = c.server.config.WriteTimeout
 		}
 		if err := c.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
-			continue
+			c.Close()
+			return
 		}
-		_, _ = c.Conn.Write(data)
+		if _, err := c.Conn.Write(data); err != nil {
+			c.Close()
+			return
+		}
 	}
 }
 
@@ -265,7 +269,7 @@ func (s *Server) handleKCPConn(netConn net.Conn) {
 	// 添加到连接管理器
 	if !s.connManager.Add(conn) {
 		s.logger.Warn(fmt.Sprintf("max connections reached, reject kcp connection from %s", netConn.RemoteAddr()))
-		netConn.Close()
+		_ = netConn.Close()
 		return
 	}
 	defer s.connManager.Remove(conn.ID())

@@ -241,11 +241,13 @@ func (c *LineCodec) Encode(msg Message) ([]byte, error) {
 	if len(data) > c.maxLineLength {
 		return nil, fmt.Errorf("line too long: %d", len(data))
 	}
-	// 确保以换行符结尾
-	if len(data) == 0 || data[len(data)-1] != '\n' {
-		data = append(data, '\n')
+	if len(data) > 0 && data[len(data)-1] == '\n' {
+		return data, nil
 	}
-	return data, nil
+	buf := make([]byte, len(data)+1)
+	copy(buf, data)
+	buf[len(data)] = '\n'
+	return buf, nil
 }
 
 // Decode 解码文本行
@@ -271,77 +273,4 @@ func (c *LineCodec) Decode(data []byte) (Message, int, error) {
 // MaxPacketSize 返回最大行长度
 func (c *LineCodec) MaxPacketSize() int {
 	return c.maxLineLength
-}
-
-// ========== JSON 编解码器 ==========
-
-// JSONCodec JSON 格式编解码器
-// 包格式: [4字节长度(大端)] + [JSON数据]
-type JSONCodec struct {
-	maxPacketSize int
-	routeKey      string // JSON中用于路由的字段名
-}
-
-// NewJSONCodec 创建JSON编解码器
-// routeKey: JSON中用于路由的字段名，如 "cmd" 或 "type"
-func NewJSONCodec(routeKey string, maxPacketSize ...int) *JSONCodec {
-	maxSize := 64 * 1024
-	if len(maxPacketSize) > 0 && maxPacketSize[0] > 0 {
-		maxSize = maxPacketSize[0]
-	}
-	return &JSONCodec{
-		maxPacketSize: maxSize,
-		routeKey:      routeKey,
-	}
-}
-
-// Encode 编码JSON消息
-func (c *JSONCodec) Encode(msg Message) ([]byte, error) {
-	data := msg.Data()
-	totalLen := 4 + len(data)
-	if totalLen > c.maxPacketSize {
-		return nil, fmt.Errorf("packet too large: %d", totalLen)
-	}
-
-	buf := make([]byte, totalLen)
-	binary.BigEndian.PutUint32(buf[0:4], uint32(totalLen))
-	copy(buf[4:], data)
-	return buf, nil
-}
-
-// Decode 解码JSON消息
-func (c *JSONCodec) Decode(data []byte) (Message, int, error) {
-	if len(data) < 4 {
-		return nil, 0, nil
-	}
-
-	packetLen := int(binary.BigEndian.Uint32(data[0:4]))
-	if packetLen > c.maxPacketSize {
-		return nil, 0, fmt.Errorf("packet too large: %d", packetLen)
-	}
-
-	if len(data) < packetLen {
-		return nil, 0, nil
-	}
-
-	jsonData := make([]byte, packetLen-4)
-	copy(jsonData, data[4:packetLen])
-
-	// 简单解析获取路由ID（这里只是示例，实际需要解析JSON）
-	// 生产环境建议使用 jsonparser 或类似库
-	routeID := c.extractRouteID(jsonData)
-
-	return NewMessage(routeID, jsonData), packetLen, nil
-}
-
-// extractRouteID 从JSON数据中提取路由ID（简化实现）
-func (c *JSONCodec) extractRouteID(data []byte) uint32 {
-	// 这是一个简化实现，生产环境应该使用标准JSON库
-	// 这里仅作为示例
-	return 0
-}
-
-// MaxPacketSize 返回最大包大小
-func (c *JSONCodec) MaxPacketSize() int {
-	return c.maxPacketSize
 }
