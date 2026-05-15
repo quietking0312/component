@@ -207,21 +207,32 @@ func (c *wsConn) readLoop() {
 	}
 }
 
-// handleBinaryMessage 处理二进制消息
+// handleBinaryMessage 处理二进制消息（帧内两阶段解码）
 func (c *wsConn) handleBinaryMessage(data []byte) {
+	codec := c.server.codec
+	headerSize := codec.HeaderSize()
 	for len(data) > 0 {
-		msg, n, err := c.server.codec.Decode(data)
-		if err != nil {
-			c.server.logger.Error(fmt.Sprintf("decode error: %v", err))
+		if len(data) < headerSize {
+			c.server.logger.Error(fmt.Sprintf("ws frame too short: %d < %d", len(data), headerSize))
 			return
 		}
-		if n == 0 {
-			// 数据不足
-			break
+		routeID, bodyLen, err := codec.DecodeHeader(data[:headerSize])
+		if err != nil {
+			c.server.logger.Error(fmt.Sprintf("decode header error: %v", err))
+			return
 		}
-
+		end := headerSize + bodyLen
+		if len(data) < end {
+			c.server.logger.Error(fmt.Sprintf("ws frame incomplete: need %d, have %d", end, len(data)))
+			return
+		}
+		msg, err := codec.DecodeBody(routeID, data[headerSize:end])
+		if err != nil {
+			c.server.logger.Error(fmt.Sprintf("decode body error: %v", err))
+			return
+		}
 		c.server.handleMessage(c, msg)
-		data = data[n:]
+		data = data[end:]
 	}
 }
 

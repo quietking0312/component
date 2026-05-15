@@ -54,18 +54,18 @@ func ReleaseMessage(msg *DefaultMessage) {
 	messagePool.Put(msg)
 }
 
-// ========== 内置编解码器 ==========
+// ========== SimpleCodec ==========
 
-// SimpleCodec 简单编解码器实现
-// 包格式: [4字节包头长度(大端)] + [4字节路由ID(大端)] + [数据]
+// SimpleCodec 简单编解码器
+// 包格式: [4字节totalLen(大端)] + [4字节routeID(大端)] + [body]
+// header = 8字节，totalLen 包含自身
 type SimpleCodec struct {
 	maxPacketSize int
 }
 
-// NewSimpleCodec 创建简单编解码器
-// maxPacketSize: 最大包大小，默认 64KB
+// NewSimpleCodec 创建简单编解码器，maxPacketSize 默认 64KB
 func NewSimpleCodec(maxPacketSize ...int) *SimpleCodec {
-	maxSize := 64 * 1024 // 64KB
+	maxSize := 64 * 1024
 	if len(maxPacketSize) > 0 && maxPacketSize[0] > 0 {
 		maxSize = maxPacketSize[0]
 	}
@@ -74,58 +74,51 @@ func NewSimpleCodec(maxPacketSize ...int) *SimpleCodec {
 
 // Encode 编码消息
 func (c *SimpleCodec) Encode(msg Message) ([]byte, error) {
-	data := msg.Data()
-	routeID := msg.RouteID()
-
-	// 总长度 = 4(长度) + 4(路由ID) + len(数据)
-	totalLen := 8 + len(data)
+	body := msg.Data()
+	totalLen := 8 + len(body)
 	if totalLen > c.maxPacketSize {
 		return nil, fmt.Errorf("packet too large: %d > %d", totalLen, c.maxPacketSize)
 	}
 
 	buf := make([]byte, totalLen)
 	binary.BigEndian.PutUint32(buf[0:4], uint32(totalLen))
-	binary.BigEndian.PutUint32(buf[4:8], routeID)
-	copy(buf[8:], data)
-
+	binary.BigEndian.PutUint32(buf[4:8], msg.RouteID())
+	copy(buf[8:], body)
 	return buf, nil
 }
 
-// Decode 解码消息
-// 返回消息和已解码的字节数
-func (c *SimpleCodec) Decode(data []byte) (Message, int, error) {
-	if len(data) < 8 {
-		return nil, 0, nil // 数据不足，等待更多数据
+// HeaderSize 返回固定 header 大小
+func (c *SimpleCodec) HeaderSize() int { return 8 }
+
+// DecodeHeader 解析 header，返回 routeID 和 body 长度
+func (c *SimpleCodec) DecodeHeader(header []byte) (routeID uint32, bodyLen int, err error) {
+	totalLen := int(binary.BigEndian.Uint32(header[0:4]))
+	if totalLen < 8 {
+		return 0, 0, fmt.Errorf("invalid packet length: %d", totalLen)
 	}
-
-	packetLen := int(binary.BigEndian.Uint32(data[0:4]))
-	if packetLen > c.maxPacketSize {
-		return nil, 0, fmt.Errorf("packet too large: %d > %d", packetLen, c.maxPacketSize)
+	if totalLen > c.maxPacketSize {
+		return 0, 0, fmt.Errorf("packet too large: %d > %d", totalLen, c.maxPacketSize)
 	}
+	routeID = binary.BigEndian.Uint32(header[4:8])
+	bodyLen = totalLen - 8
+	return routeID, bodyLen, nil
+}
 
-	if packetLen < 8 {
-		return nil, 0, fmt.Errorf("invalid packet length: %d", packetLen)
-	}
-
-	if len(data) < packetLen {
-		return nil, 0, nil // 数据不足，等待更多数据
-	}
-
-	routeID := binary.BigEndian.Uint32(data[4:8])
-	msgData := make([]byte, packetLen-8)
-	copy(msgData, data[8:packetLen])
-
-	msg := NewMessage(routeID, msgData)
-	return msg, packetLen, nil
+// DecodeBody 将 body 解析为消息
+func (c *SimpleCodec) DecodeBody(routeID uint32, body []byte) (Message, error) {
+	data := make([]byte, len(body))
+	copy(data, body)
+	return NewMessage(routeID, data), nil
 }
 
 // MaxPacketSize 返回最大包大小
-func (c *SimpleCodec) MaxPacketSize() int {
-	return c.maxPacketSize
-}
+func (c *SimpleCodec) MaxPacketSize() int { return c.maxPacketSize }
+
+// ========== TLVCodec ==========
 
 // TLVCodec TLV格式编解码器
 // 包格式: [1字节Type] + [2字节Length(大端)] + [Value]
+// header = 3字节，Length 为 body 长度
 type TLVCodec struct {
 	maxPacketSize int
 }
@@ -148,80 +141,60 @@ func NewTLVCodec(maxPacketSize ...int) *TLVCodec {
 // Encode 编码TLV消息
 func (c *TLVCodec) Encode(msg Message) ([]byte, error) {
 	data := msg.Data()
-	tlvMsg, ok := msg.(*TLVMessage)
-
-	var msgType byte
-	if ok {
-		msgType = tlvMsg.msgType
-	}
-
 	if len(data) > 0xFFFF {
 		return nil, fmt.Errorf("data too large for TLV: %d", len(data))
+	}
+
+	var msgType byte
+	if tlvMsg, ok := msg.(*TLVMessage); ok {
+		msgType = tlvMsg.msgType
 	}
 
 	buf := make([]byte, 3+len(data))
 	buf[0] = msgType
 	binary.BigEndian.PutUint16(buf[1:3], uint16(len(data)))
 	copy(buf[3:], data)
-
 	return buf, nil
 }
 
-// Decode 解码TLV消息
-func (c *TLVCodec) Decode(data []byte) (Message, int, error) {
-	if len(data) < 3 {
-		return nil, 0, nil
-	}
+// HeaderSize 返回固定 header 大小
+func (c *TLVCodec) HeaderSize() int { return 3 }
 
-	msgType := data[0]
-	length := int(binary.BigEndian.Uint16(data[1:3]))
-
+// DecodeHeader 解析 header，返回 routeID 和 body 长度
+func (c *TLVCodec) DecodeHeader(header []byte) (routeID uint32, bodyLen int, err error) {
+	length := int(binary.BigEndian.Uint16(header[1:3]))
 	if length > c.maxPacketSize {
-		return nil, 0, fmt.Errorf("TLV packet too large: %d", length)
+		return 0, 0, fmt.Errorf("TLV packet too large: %d", length)
 	}
+	return uint32(header[0]), length, nil
+}
 
-	if len(data) < 3+length {
-		return nil, 0, nil
-	}
-
-	msgData := make([]byte, length)
-	copy(msgData, data[3:3+length])
-
-	msg := &TLVMessage{
-		msgType: msgType,
-		data:    msgData,
-	}
-	return msg, 3 + length, nil
+// DecodeBody 将 body 解析为消息
+func (c *TLVCodec) DecodeBody(routeID uint32, body []byte) (Message, error) {
+	data := make([]byte, len(body))
+	copy(data, body)
+	return &TLVMessage{msgType: byte(routeID), data: data}, nil
 }
 
 // MaxPacketSize 返回最大包大小
-func (c *TLVCodec) MaxPacketSize() int {
-	return c.maxPacketSize
-}
+func (c *TLVCodec) MaxPacketSize() int { return c.maxPacketSize }
 
 // RouteID TLVMessage 的路由ID就是 msgType
-func (m *TLVMessage) RouteID() uint32 {
-	return uint32(m.msgType)
-}
+func (m *TLVMessage) RouteID() uint32 { return uint32(m.msgType) }
 
 // Data 返回数据
-func (m *TLVMessage) Data() []byte {
-	return m.data
-}
+func (m *TLVMessage) Data() []byte { return m.data }
 
 // SetData 设置数据
-func (m *TLVMessage) SetData(data []byte) {
-	m.data = data
-}
+func (m *TLVMessage) SetData(data []byte) { m.data = data }
 
 // MsgType 返回消息类型
-func (m *TLVMessage) MsgType() byte {
-	return m.msgType
-}
+func (m *TLVMessage) MsgType() byte { return m.msgType }
 
-// ========== 文本行编解码器 ==========
+// ========== LineCodec ==========
 
 // LineCodec 文本行编解码器，适用于文本协议（如 Telnet）
+// 因行长度不固定，HeaderSize 返回 0，bufferedReader 走流式扫描路径。
 type LineCodec struct {
 	maxLineLength int
 }
@@ -235,7 +208,7 @@ func NewLineCodec(maxLineLength ...int) *LineCodec {
 	return &LineCodec{maxLineLength: maxLen}
 }
 
-// Encode 编码文本行（添加换行符）
+// Encode 编码文本行（末尾添加换行符）
 func (c *LineCodec) Encode(msg Message) ([]byte, error) {
 	data := msg.Data()
 	if len(data) > c.maxLineLength {
@@ -250,27 +223,36 @@ func (c *LineCodec) Encode(msg Message) ([]byte, error) {
 	return buf, nil
 }
 
-// Decode 解码文本行
-func (c *LineCodec) Decode(data []byte) (Message, int, error) {
-	// 查找换行符
+// HeaderSize 返回 0，表示使用流式扫描而非固定 header
+func (c *LineCodec) HeaderSize() int { return 0 }
+
+// DecodeHeader 不适用于 LineCodec，始终返回错误
+func (c *LineCodec) DecodeHeader(header []byte) (uint32, int, error) {
+	return 0, 0, fmt.Errorf("LineCodec does not support two-phase decoding")
+}
+
+// DecodeBody 不适用于 LineCodec
+func (c *LineCodec) DecodeBody(routeID uint32, body []byte) (Message, error) {
+	return nil, fmt.Errorf("LineCodec does not support two-phase decoding")
+}
+
+// ScanLine 扫描缓冲区中的一行，返回消息和已消费字节数；数据不足时返回 nil,0,nil
+func (c *LineCodec) ScanLine(data []byte) (Message, int, error) {
 	for i, b := range data {
+		if i >= c.maxLineLength {
+			return nil, 0, fmt.Errorf("line too long")
+		}
 		if b == '\n' {
 			line := make([]byte, i)
 			copy(line, data[:i])
-			// 移除可能的 \r
 			if len(line) > 0 && line[len(line)-1] == '\r' {
 				line = line[:len(line)-1]
 			}
 			return NewMessage(0, line), i + 1, nil
 		}
-		if i >= c.maxLineLength {
-			return nil, 0, fmt.Errorf("line too long")
-		}
 	}
-	return nil, 0, nil // 等待更多数据
+	return nil, 0, nil
 }
 
 // MaxPacketSize 返回最大行长度
-func (c *LineCodec) MaxPacketSize() int {
-	return c.maxLineLength
-}
+func (c *LineCodec) MaxPacketSize() int { return c.maxLineLength }

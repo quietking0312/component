@@ -293,12 +293,16 @@ func TestCodec_SimpleCodec(t *testing.T) {
 	// 编码
 	data, err := codec.Encode(msg)
 	assert.NoError(t, err)
-	assert.Equal(t, 8+11, len(data)) // 4(长度) + 4(路由ID) + 11(数据)
+	assert.Equal(t, 8+11, len(data))
 
-	// 解码
-	decoded, n, err := codec.Decode(data)
+	// 两阶段解码
+	routeID, bodyLen, err := codec.DecodeHeader(data[:codec.HeaderSize()])
 	assert.NoError(t, err)
-	assert.Equal(t, len(data), n)
+	assert.Equal(t, uint32(100), routeID)
+	assert.Equal(t, 11, bodyLen)
+
+	decoded, err := codec.DecodeBody(routeID, data[codec.HeaderSize():])
+	assert.NoError(t, err)
 	assert.Equal(t, uint32(100), decoded.RouteID())
 	assert.Equal(t, "hello world", string(decoded.Data()))
 }
@@ -312,12 +316,16 @@ func TestCodec_TLVCodec(t *testing.T) {
 	// 编码
 	data, err := codec.Encode(msg)
 	assert.NoError(t, err)
-	assert.Equal(t, 3+4, len(data)) // 1(类型) + 2(长度) + 4(数据)
+	assert.Equal(t, 3+4, len(data))
 
-	// 解码
-	decoded, n, err := codec.Decode(data)
+	// 两阶段解码
+	routeID, bodyLen, err := codec.DecodeHeader(data[:codec.HeaderSize()])
 	assert.NoError(t, err)
-	assert.Equal(t, len(data), n)
+	assert.Equal(t, uint32(5), routeID)
+	assert.Equal(t, 4, bodyLen)
+
+	decoded, err := codec.DecodeBody(routeID, data[codec.HeaderSize():])
+	assert.NoError(t, err)
 
 	tlvMsg, ok := decoded.(*TLVMessage)
 	assert.True(t, ok)
@@ -336,8 +344,8 @@ func TestCodec_LineCodec(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "hello\n", string(data))
 
-	// 解码
-	decoded, n, err := codec.Decode(data)
+	// LineCodec 用 ScanLine 解码
+	decoded, n, err := codec.ScanLine(data)
 	assert.NoError(t, err)
 	assert.Equal(t, len(data), n)
 	assert.Equal(t, "hello", string(decoded.Data()))
@@ -465,10 +473,12 @@ func BenchmarkCodec_Decode(b *testing.B) {
 	codec := NewSimpleCodec()
 	msg := NewMessage(1, make([]byte, 256))
 	data, _ := codec.Encode(msg)
+	hs := codec.HeaderSize()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		codec.Decode(data)
+		routeID, bodyLen, _ := codec.DecodeHeader(data[:hs])
+		codec.DecodeBody(routeID, data[hs:hs+bodyLen])
 	}
 }
 

@@ -103,6 +103,7 @@ func (s *Server) runGWSServer() error {
 		WriteMaxPayloadSize: s.config.WriteBufferSize * 2,
 		Recovery:            gws.Recovery,
 		HandshakeTimeout:    10 * time.Second,
+		ParallelEnabled:     true,
 		Authorize: func(r *http.Request, session gws.SessionStorage) bool {
 			return true
 		},

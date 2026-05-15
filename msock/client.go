@@ -2,6 +2,7 @@ package msock
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"time"
@@ -94,7 +95,6 @@ func (c *Client) connectTCP(addr string) error {
 			Conn:     netConn,
 			server:   nil,
 			codec:    c.codec,
-			reader:   newBufferedReader(netConn, c.config.ReadBufferSize),
 		},
 		client: c,
 	}
@@ -113,6 +113,7 @@ func (c *Client) connectTCP(addr string) error {
 	go conn.readLoop()
 
 	c.logger.Info(fmt.Sprintf("tcp connected to %s", addr))
+	c.startHeartbeat()
 	return nil
 }
 
@@ -154,6 +155,7 @@ func (c *Client) connectWebSocket(addr string) error {
 	go conn.readLoop()
 
 	c.logger.Info(fmt.Sprintf("websocket connected to %s", addr))
+	c.startHeartbeat()
 	return nil
 }
 
@@ -193,6 +195,7 @@ func (c *Client) connectGWS(addr string) error {
 	}()
 
 	c.logger.Info(fmt.Sprintf("gws connected to %s", addr))
+	c.startHeartbeat()
 	return nil
 }
 
@@ -217,7 +220,6 @@ func (c *Client) connectKCP(addr string) error {
 			Conn:     conn,
 			server:   nil,
 			codec:    c.codec,
-			reader:   newBufferedReader(conn, c.config.ReadBufferSize),
 		},
 		client: c,
 	}
@@ -236,6 +238,7 @@ func (c *Client) connectKCP(addr string) error {
 	go clientConn.readLoop()
 
 	c.logger.Info(fmt.Sprintf("kcp connected to %s", addr))
+	c.startHeartbeat()
 	return nil
 }
 
@@ -323,6 +326,7 @@ type tcpClientConn struct {
 }
 
 // readLoop 读取循环
+// readLoop 读取循环（两阶段解码）
 func (c *tcpClientConn) readLoop() {
 	defer func() {
 		if r := recover(); r != nil {
@@ -333,6 +337,10 @@ func (c *tcpClientConn) readLoop() {
 			c.client.handlers.onDisconnect(c)
 		}
 	}()
+
+	codec := c.client.codec
+	headerSize := codec.HeaderSize()
+	header := make([]byte, headerSize)
 
 	for {
 		if c.IsClosed() {
@@ -345,30 +353,65 @@ func (c *tcpClientConn) readLoop() {
 			}
 		}
 
-		data, err := c.reader.Read()
-		if err != nil {
-			if !c.IsClosed() && c.client.handlers.onError != nil {
-				c.client.handlers.onError(err)
-			}
-			return
-		}
+		var (
+			msg Message
+			err error
+		)
 
-		for len(data) > 0 {
-			msg, n, err := c.client.codec.Decode(data)
+		if headerSize == 0 {
+			lc, ok := codec.(*LineCodec)
+			if !ok {
+				return
+			}
+			line, e := scanLine(c.Conn, lc.MaxPacketSize())
+			if e != nil {
+				if !c.IsClosed() && c.client.handlers.onError != nil {
+					c.client.handlers.onError(e)
+				}
+				return
+			}
+			msg = NewMessage(0, line)
+		} else {
+			if _, e := io.ReadFull(c.Conn, header); e != nil {
+				if !c.IsClosed() && c.client.handlers.onError != nil {
+					c.client.handlers.onError(e)
+				}
+				return
+			}
+
+			routeID, bodyLen, e := codec.DecodeHeader(header)
+			if e != nil {
+				if c.client.handlers.onError != nil {
+					c.client.handlers.onError(e)
+				}
+				return
+			}
+
+			var body []byte
+			if bodyLen > 0 {
+				body = acquireBody(bodyLen)
+				if _, e = io.ReadFull(c.Conn, body); e != nil {
+					releaseBody(body)
+					if !c.IsClosed() && c.client.handlers.onError != nil {
+						c.client.handlers.onError(e)
+					}
+					return
+				}
+			}
+
+			msg, err = codec.DecodeBody(routeID, body)
+			if bodyLen > 0 {
+				releaseBody(body)
+			}
 			if err != nil {
 				if c.client.handlers.onError != nil {
 					c.client.handlers.onError(err)
 				}
 				return
 			}
-			if n == 0 {
-				c.reader.Unread(data)
-				break
-			}
-
-			c.client.handleMessage(c, msg)
-			data = data[n:]
 		}
+
+		c.client.handleMessage(c, msg)
 	}
 }
 
@@ -419,19 +462,38 @@ func (c *wsClientConn) readLoop() {
 }
 
 func (c *wsClientConn) handleBinaryMessage(data []byte) {
+	codec := c.client.codec
+	headerSize := codec.HeaderSize()
 	for len(data) > 0 {
-		msg, n, err := c.client.codec.Decode(data)
+		if len(data) < headerSize {
+			if c.client.handlers.onError != nil {
+				c.client.handlers.onError(fmt.Errorf("ws client frame too short: %d < %d", len(data), headerSize))
+			}
+			return
+		}
+		routeID, bodyLen, err := codec.DecodeHeader(data[:headerSize])
 		if err != nil {
 			if c.client.handlers.onError != nil {
 				c.client.handlers.onError(err)
 			}
 			return
 		}
-		if n == 0 {
-			break
+		end := headerSize + bodyLen
+		if len(data) < end {
+			if c.client.handlers.onError != nil {
+				c.client.handlers.onError(fmt.Errorf("ws client frame incomplete: need %d, have %d", end, len(data)))
+			}
+			return
+		}
+		msg, err := codec.DecodeBody(routeID, data[headerSize:end])
+		if err != nil {
+			if c.client.handlers.onError != nil {
+				c.client.handlers.onError(err)
+			}
+			return
 		}
 		c.client.handleMessage(c, msg)
-		data = data[n:]
+		data = data[end:]
 	}
 }
 
@@ -502,7 +564,7 @@ type kcpClientConn struct {
 	client *Client
 }
 
-// readLoop 读取循环
+// readLoop 读取循环（两阶段解码）
 func (c *kcpClientConn) readLoop() {
 	defer func() {
 		if r := recover(); r != nil {
@@ -513,6 +575,10 @@ func (c *kcpClientConn) readLoop() {
 			c.client.handlers.onDisconnect(c)
 		}
 	}()
+
+	codec := c.client.codec
+	headerSize := codec.HeaderSize()
+	header := make([]byte, headerSize)
 
 	for {
 		if c.IsClosed() {
@@ -525,29 +591,64 @@ func (c *kcpClientConn) readLoop() {
 			}
 		}
 
-		data, err := c.reader.Read()
-		if err != nil {
-			if !c.IsClosed() && c.client.handlers.onError != nil {
-				c.client.handlers.onError(err)
-			}
-			return
-		}
+		var (
+			msg Message
+			err error
+		)
 
-		for len(data) > 0 {
-			msg, n, err := c.client.codec.Decode(data)
+		if headerSize == 0 {
+			lc, ok := codec.(*LineCodec)
+			if !ok {
+				return
+			}
+			line, e := scanLine(c.Conn, lc.MaxPacketSize())
+			if e != nil {
+				if !c.IsClosed() && c.client.handlers.onError != nil {
+					c.client.handlers.onError(e)
+				}
+				return
+			}
+			msg = NewMessage(0, line)
+		} else {
+			if _, e := io.ReadFull(c.Conn, header); e != nil {
+				if !c.IsClosed() && c.client.handlers.onError != nil {
+					c.client.handlers.onError(e)
+				}
+				return
+			}
+
+			routeID, bodyLen, e := codec.DecodeHeader(header)
+			if e != nil {
+				if c.client.handlers.onError != nil {
+					c.client.handlers.onError(e)
+				}
+				return
+			}
+
+			var body []byte
+			if bodyLen > 0 {
+				body = acquireBody(bodyLen)
+				if _, e = io.ReadFull(c.Conn, body); e != nil {
+					releaseBody(body)
+					if !c.IsClosed() && c.client.handlers.onError != nil {
+						c.client.handlers.onError(e)
+					}
+					return
+				}
+			}
+
+			msg, err = codec.DecodeBody(routeID, body)
+			if bodyLen > 0 {
+				releaseBody(body)
+			}
 			if err != nil {
 				if c.client.handlers.onError != nil {
 					c.client.handlers.onError(err)
 				}
 				return
 			}
-			if n == 0 {
-				c.reader.Unread(data)
-				break
-			}
-
-			c.client.handleMessage(c, msg)
-			data = data[n:]
 		}
+
+		c.client.handleMessage(c, msg)
 	}
 }

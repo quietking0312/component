@@ -28,6 +28,7 @@ type Server struct {
 	}
 
 	closed int32
+	stopCh chan struct{}
 	wg     sync.WaitGroup
 	mu     sync.Mutex
 }
@@ -48,6 +49,7 @@ func NewServer(opts ...ServerOption) (*Server, error) {
 		codec:       config.Codec,
 		logger:      config.Logger,
 		connManager: NewConnManager(config.MaxConnections),
+		stopCh:      make(chan struct{}),
 	}, nil
 }
 
@@ -83,6 +85,7 @@ func (s *Server) OnError(fn func(Conn, error)) {
 
 // Run 启动服务器
 func (s *Server) Run() error {
+	s.startHeartbeatChecker()
 	switch s.config.ConnType {
 	case ConnTypeTCP:
 		return s.runTCP()
@@ -181,12 +184,15 @@ func (s *Server) handleConn(netConn net.Conn) {
 
 // handleMessage 处理消息
 func (s *Server) handleMessage(conn Conn, msg Message) {
+	// 收到任意包都更新心跳时间，避免活跃连接被误踢
+	if bc := extractBaseConn(conn); bc != nil {
+		bc.TouchHeartbeat()
+	}
+
 	if s.router == nil {
 		s.logger.Warn(fmt.Sprintf("router not set, dropping message from %s", conn.ID()))
 		return
 	}
-
-	// 使用工作池处理消息（可选）
 	s.router.Handle(conn, msg)
 }
 
@@ -197,6 +203,7 @@ func (s *Server) Stop() error {
 	}
 
 	s.logger.Info(fmt.Sprintf("stopping server..."))
+	close(s.stopCh)
 
 	// 关闭监听器
 	if s.listener != nil {

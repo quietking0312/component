@@ -2,6 +2,7 @@ package msock
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"time"
 
@@ -48,7 +49,6 @@ type kcpConn struct {
 	net.Conn
 	server *Server
 	codec  Codec
-	reader *bufferedReader
 }
 
 // newKCPConn 创建KCP连接
@@ -58,7 +58,6 @@ func newKCPConn(conn net.Conn, server *Server) *kcpConn {
 		Conn:     conn,
 		server:   server,
 		codec:    server.codec,
-		reader:   newBufferedReader(conn, server.config.ReadBufferSize),
 	}
 	c.initSendQueue(128)
 	c.sendWg.Add(1)
@@ -134,7 +133,7 @@ func (c *kcpConn) SetWriteDeadline(t time.Time) error {
 	return c.Conn.SetWriteDeadline(t)
 }
 
-// readLoop 读取循环
+// readLoop 读取循环（两阶段解码）
 func (c *kcpConn) readLoop() {
 	defer func() {
 		if r := recover(); r != nil {
@@ -142,6 +141,10 @@ func (c *kcpConn) readLoop() {
 		}
 		c.Close()
 	}()
+
+	codec := c.server.codec
+	headerSize := codec.HeaderSize()
+	header := make([]byte, headerSize)
 
 	for {
 		if c.IsClosed() {
@@ -155,38 +158,66 @@ func (c *kcpConn) readLoop() {
 			}
 		}
 
-		// 读取数据
-		data, err := c.reader.Read()
-		if err != nil {
-			if !c.IsClosed() {
-				c.server.logger.Debug(fmt.Sprintf("kcp read error: %v", err))
-			}
-			return
-		}
+		var msg Message
 
-		// 解码消息
-		for len(data) > 0 {
-			msg, n, err := c.server.codec.Decode(data)
-			if err != nil {
-				c.server.logger.Error(fmt.Sprintf("kcp decode error: %v", err))
+		if headerSize == 0 {
+			lc, ok := codec.(*LineCodec)
+			if !ok {
+				c.server.logger.Error("codec headerSize=0 but is not LineCodec")
 				return
 			}
-			if n == 0 {
-				c.reader.Unread(data)
-				break
+			line, err := scanLine(c.Conn, lc.MaxPacketSize())
+			if err != nil {
+				if !c.IsClosed() {
+					c.server.logger.Debug(fmt.Sprintf("kcp read error: %v", err))
+				}
+				return
+			}
+			msg = NewMessage(0, line)
+		} else {
+			if _, err := io.ReadFull(c.Conn, header); err != nil {
+				if !c.IsClosed() {
+					c.server.logger.Debug(fmt.Sprintf("kcp read header error: %v", err))
+				}
+				return
 			}
 
-			// 安全处理消息：handler panic 不传播到 readLoop，不关闭连接
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						c.server.logger.Error(fmt.Sprintf("panic in handler: %v, conn: %s", r, c.ID()))
+			routeID, bodyLen, err := codec.DecodeHeader(header)
+			if err != nil {
+				c.server.logger.Error(fmt.Sprintf("kcp decode header error: %v", err))
+				return
+			}
+
+			var body []byte
+			if bodyLen > 0 {
+				body = acquireBody(bodyLen)
+				if _, err = io.ReadFull(c.Conn, body); err != nil {
+					releaseBody(body)
+					if !c.IsClosed() {
+						c.server.logger.Debug(fmt.Sprintf("kcp read body error: %v", err))
 					}
-				}()
-				c.server.handleMessage(c, msg)
-			}()
-			data = data[n:]
+					return
+				}
+			}
+
+			msg, err = codec.DecodeBody(routeID, body)
+			if bodyLen > 0 {
+				releaseBody(body)
+			}
+			if err != nil {
+				c.server.logger.Error(fmt.Sprintf("kcp decode body error: %v", err))
+				return
+			}
 		}
+
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					c.server.logger.Error(fmt.Sprintf("panic in handler: %v, conn: %s", r, c.ID()))
+				}
+			}()
+			c.server.handleMessage(c, msg)
+		}()
 	}
 }
 

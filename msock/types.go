@@ -56,14 +56,17 @@ type Conn interface {
 	GetValue(key interface{}) (interface{}, bool)
 }
 
-// Codec 编解码器接口，用于自定义解包
+// Codec 编解码器接口，采用两阶段解码：先解 header 得到 body 长度，再读 body。
 type Codec interface {
 	// Encode 编码消息为字节流
 	Encode(msg Message) ([]byte, error)
-	// Decode 解码字节流为消息
-	// 返回消息和已解码的字节数
-	Decode(data []byte) (Message, int, error)
-	// MaxPacketSize 返回允许的最大包大小
+	// HeaderSize 返回固定 header 字节数
+	HeaderSize() int
+	// DecodeHeader 解析 header，返回 routeID 和 body 长度
+	DecodeHeader(header []byte) (routeID uint32, bodyLen int, err error)
+	// DecodeBody 将 body 字节解析为消息
+	DecodeBody(routeID uint32, body []byte) (Message, error)
+	// MaxPacketSize 返回允许的最大包大小（header + body）
 	MaxPacketSize() int
 }
 
@@ -117,10 +120,16 @@ type ServerConfig struct {
 	ReadTimeout time.Duration
 	// 写超时
 	WriteTimeout time.Duration
-	// 心跳间隔
+	// 心跳间隔（服务端：检测周期；客户端：发送周期）
 	HeartbeatInterval time.Duration
-	// 心跳超时
+	// 心跳超时（超过此时间未收到心跳则断开）
 	HeartbeatTimeout time.Duration
+	// 心跳 Ping 路由ID
+	HeartbeatPingID uint32
+	// 心跳 Pong 路由ID
+	HeartbeatPongID uint32
+	// 心跳 Pong 内容生成函数，入参为收到的 ping 消息，返回 pong body；为 nil 时 pong body 为空
+	HeartbeatPongData func(ping Message) []byte
 }
 
 // DefaultServerConfig 返回默认服务器配置
@@ -136,6 +145,8 @@ func DefaultServerConfig() *ServerConfig {
 		WriteTimeout:      10 * time.Second,
 		HeartbeatInterval: 30 * time.Second,
 		HeartbeatTimeout:  90 * time.Second,
+		HeartbeatPingID:   0xFFFFFFFE,
+		HeartbeatPongID:   0xFFFFFFFF,
 	}
 }
 
@@ -207,5 +218,21 @@ func WithHeartbeat(interval, timeout time.Duration) ServerOption {
 	return func(c *ServerConfig) {
 		c.HeartbeatInterval = interval
 		c.HeartbeatTimeout = timeout
+	}
+}
+
+// WithHeartbeatRouteID 设置心跳包的路由ID
+func WithHeartbeatRouteID(pingID, pongID uint32) ServerOption {
+	return func(c *ServerConfig) {
+		c.HeartbeatPingID = pingID
+		c.HeartbeatPongID = pongID
+	}
+}
+
+// WithHeartbeatPongData 设置 pong 内容生成函数
+// fn 入参为收到的 ping 消息，返回值作为 pong 的 body
+func WithHeartbeatPongData(fn func(ping Message) []byte) ServerOption {
+	return func(c *ServerConfig) {
+		c.HeartbeatPongData = fn
 	}
 }
