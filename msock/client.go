@@ -201,18 +201,41 @@ func (c *Client) connectGWS(addr string) error {
 
 // connectKCP 连接KCP服务器
 func (c *Client) connectKCP(addr string) error {
-	conn, err := kcp.Dial(addr)
+	cfg := c.config.KCPConfig
+	if cfg == nil {
+		cfg = DefaultKCPConfig()
+	}
+
+	var (
+		rawConn net.Conn
+		err     error
+	)
+
+	if cfg.EnableCrypt && cfg.CryptKey != "" {
+		block, cryptErr := newKCPBlockCrypt(cfg.CryptKey)
+		if cryptErr != nil {
+			c.logger.Error(fmt.Sprintf("kcp create block crypt error: %v", cryptErr))
+			return cryptErr
+		}
+		rawConn, err = kcp.DialWithOptions(addr, block, cfg.DataShards, cfg.ParityShards)
+	} else {
+		rawConn, err = kcp.Dial(addr)
+	}
 	if err != nil {
 		c.logger.Error(fmt.Sprintf("kcp connect error: %v", err))
 		return err
 	}
 
-	// 设置KCP参数
-	if kcpSess, ok := conn.(*kcp.UDPSession); ok {
-		kcpSess.SetWindowSize(128, 128)
-		kcpSess.SetNoDelay(1, 10, 2, 1)
-		kcpSess.SetStreamMode(true)
+	if sess, ok := rawConn.(*kcp.UDPSession); ok {
+		sess.SetWindowSize(cfg.SendWindow, cfg.RecvWindow)
+		sess.SetNoDelay(cfg.NoDelay, cfg.Interval, cfg.Resend, cfg.NC)
+		sess.SetStreamMode(true)
+		if cfg.Mtu > 0 {
+			sess.SetMtu(cfg.Mtu)
+		}
 	}
+
+	conn := rawConn
 
 	clientConn := &kcpClientConn{
 		kcpConn: &kcpConn{

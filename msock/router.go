@@ -3,8 +3,9 @@ package msock
 import (
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 // Router 消息路由器
@@ -211,19 +212,19 @@ func Validate(validateFunc func(msg Message) error, logger Logger) Middleware {
 	}
 }
 
-// RateLimit 限流中间件，按连接统计请求数，连接断开后自动清理计数器
-func RateLimit(maxRequests int, logger Logger) Middleware {
-	type entry struct {
-		counter atomic.Int64
-	}
-	var limiters sync.Map // map[connID string]*entry
+// RateLimit 限流中间件，基于令牌桶算法，按连接独立限流。
+// r: 每秒补充的令牌数（即每秒允许的请求速率）
+// burst: 令牌桶容量（允许的瞬时突发量）
+// 连接断开后自动清理限流器。
+func RateLimit(r float64, burst int, logger Logger) Middleware {
+	var limiters sync.Map // map[connID string]*rate.Limiter
 
 	return func(next Handler) Handler {
 		return func(conn Conn, msg Message) {
 			connID := conn.ID()
 
-			val, loaded := limiters.LoadOrStore(connID, &entry{})
-			e := val.(*entry)
+			val, loaded := limiters.LoadOrStore(connID, rate.NewLimiter(rate.Limit(r), burst))
+			limiter := val.(*rate.Limiter)
 
 			if !loaded {
 				go func() {
@@ -232,8 +233,7 @@ func RateLimit(maxRequests int, logger Logger) Middleware {
 				}()
 			}
 
-			current := e.counter.Add(1)
-			if int(current) > maxRequests {
+			if !limiter.Allow() {
 				if logger != nil {
 					logger.Warn(fmt.Sprintf("rate limit exceeded, conn: %s", connID))
 				}

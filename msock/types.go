@@ -130,6 +130,8 @@ type ServerConfig struct {
 	HeartbeatPongID uint32
 	// 心跳 Pong 内容生成函数，入参为收到的 ping 消息，返回 pong body；为 nil 时 pong body 为空
 	HeartbeatPongData func(ping Message) []byte
+	// KCP 配置，ConnType 为 ConnTypeKCP 时生效
+	KCPConfig *KCPConfig
 }
 
 // DefaultServerConfig 返回默认服务器配置
@@ -147,6 +149,7 @@ func DefaultServerConfig() *ServerConfig {
 		HeartbeatTimeout:  90 * time.Second,
 		HeartbeatPingID:   0xFFFFFFFE,
 		HeartbeatPongID:   0xFFFFFFFF,
+		KCPConfig:         DefaultKCPConfig(),
 	}
 }
 
@@ -234,5 +237,12 @@ func WithHeartbeatRouteID(pingID, pongID uint32) ServerOption {
 func WithHeartbeatPongData(fn func(ping Message) []byte) ServerOption {
 	return func(c *ServerConfig) {
 		c.HeartbeatPongData = fn
+	}
+}
+
+// WithKCPConfig 设置 KCP 配置
+func WithKCPConfig(cfg *KCPConfig) ServerOption {
+	return func(c *ServerConfig) {
+		c.KCPConfig = cfg
 	}
 }

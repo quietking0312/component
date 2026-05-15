@@ -15,18 +15,28 @@ type KCPConfig struct {
 	SendWindow int
 	// 接收窗口大小
 	RecvWindow int
-	// 数据包大小
+	// 数据包最大传输单元
 	Mtu int
-	// 是否启用FEC
+	// 是否启用 FEC
 	EnableFEC bool
-	// FEC数据分片数
+	// FEC 数据分片数
 	DataShards int
-	// FEC校验分片数
+	// FEC 校验分片数
 	ParityShards int
 	// 是否启用加密
 	EnableCrypt bool
-	// 加密密钥
+	// 加密密钥（EnableCrypt 为 true 时必填）
 	CryptKey string
+
+	// 以下对应 kcp.UDPSession.SetNoDelay 的四个参数
+	// NoDelay: 0=关闭，1=开启 nodelay 模式
+	NoDelay int
+	// Interval: 内部刷新时间间隔（毫秒）
+	Interval int
+	// Resend: 快速重传模式，0=关闭，2=推荐值
+	Resend int
+	// NC: 是否关闭流量控制，0=开启，1=关闭
+	NC int
 }
 
 // DefaultKCPConfig 返回默认KCP配置
@@ -40,6 +50,10 @@ func DefaultKCPConfig() *KCPConfig {
 		ParityShards: 3,
 		EnableCrypt:  false,
 		CryptKey:     "",
+		NoDelay:      1,
+		Interval:     10,
+		Resend:       2,
+		NC:           1,
 	}
 }
 
@@ -221,33 +235,40 @@ func (c *kcpConn) readLoop() {
 	}
 }
 
+// newKCPBlockCrypt 从密钥字符串创建 AES 块加密器（固定填充为 32 字节）
+func newKCPBlockCrypt(key string) (kcp.BlockCrypt, error) {
+	k := make([]byte, 32)
+	copy(k, []byte(key))
+	return kcp.NewAESBlockCrypt(k)
+}
+
 // runKCPServer 运行KCP服务器（在Server.runKCP中调用）
-func (s *Server) runKCPServer(config ...*KCPConfig) error {
-	cfg := DefaultKCPConfig()
-	if len(config) > 0 && config[0] != nil {
-		cfg = config[0]
+func (s *Server) runKCPServer() error {
+	cfg := s.config.KCPConfig
+	if cfg == nil {
+		cfg = DefaultKCPConfig()
 	}
 
-	var listener net.Listener
-	var err error
+	var (
+		listener net.Listener
+		err      error
+	)
 
 	if cfg.EnableCrypt && cfg.CryptKey != "" {
-		// 使用加密的KCP
-		listener, err = kcp.ListenWithOptions(s.config.Address, nil, 0, 0)
-		if err != nil {
-			s.logger.Error(fmt.Sprintf("kcp listen error: %v", err))
+		block, cryptErr := newKCPBlockCrypt(cfg.CryptKey)
+		if cryptErr != nil {
+			s.logger.Error(fmt.Sprintf("kcp create block crypt error: %v", cryptErr))
 			return ErrListenFailed
 		}
+		listener, err = kcp.ListenWithOptions(s.config.Address, block, cfg.DataShards, cfg.ParityShards)
 	} else {
-		// 不使用加密的KCP
 		listener, err = kcp.Listen(s.config.Address)
-		if err != nil {
-			s.logger.Error(fmt.Sprintf("kcp listen error: %v", err))
-			return ErrListenFailed
-		}
+	}
+	if err != nil {
+		s.logger.Error(fmt.Sprintf("kcp listen error: %v", err))
+		return ErrListenFailed
 	}
 
-	// 设置KCP参数
 	if kcpListener, ok := listener.(*kcp.Listener); ok {
 		kcpListener.SetReadBuffer(s.config.ReadBufferSize)
 		kcpListener.SetWriteBuffer(s.config.WriteBufferSize)
@@ -261,6 +282,11 @@ func (s *Server) runKCPServer(config ...*KCPConfig) error {
 
 // acceptKCPLoop 接受KCP连接循环
 func (s *Server) acceptKCPLoop() error {
+	cfg := s.config.KCPConfig
+	if cfg == nil {
+		cfg = DefaultKCPConfig()
+	}
+
 	for {
 		if s.isClosed() {
 			return ErrServerClosed
@@ -278,11 +304,13 @@ func (s *Server) acceptKCPLoop() error {
 			continue
 		}
 
-		// 设置KCP连接参数
-		if kcpConn, ok := conn.(*kcp.UDPSession); ok {
-			kcpConn.SetWindowSize(128, 128)
-			kcpConn.SetNoDelay(1, 10, 2, 1)
-			kcpConn.SetStreamMode(true)
+		if sess, ok := conn.(*kcp.UDPSession); ok {
+			sess.SetWindowSize(cfg.SendWindow, cfg.RecvWindow)
+			sess.SetNoDelay(cfg.NoDelay, cfg.Interval, cfg.Resend, cfg.NC)
+			sess.SetStreamMode(true)
+			if cfg.Mtu > 0 {
+				sess.SetMtu(cfg.Mtu)
+			}
 		}
 
 		s.wg.Add(1)
