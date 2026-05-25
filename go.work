@@ -6,6 +6,7 @@ use (
 	./marr
 	./mbar
 	./mcachedb
+	./mconsole
 	./mconf
 	./mcron
 	./mcyptos
