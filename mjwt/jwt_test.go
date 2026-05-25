@@ -2,34 +2,66 @@ package mjwt
 
 import (
 	"fmt"
-	"github.com/golang-jwt/jwt/v5"
 	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
-type N struct {
-	Id int64
-	*jwt.RegisteredClaims
+type UserInfo struct {
+	ID   int64
+	Name string
+	Role string
 }
 
-func TestJWT(t *testing.T) {
-	j := NewJWT([]byte("battle"), jwt.SigningMethodHS256)
-	j.SetData(&N{
-		Id:               1,
-		RegisteredClaims: &jwt.RegisteredClaims{},
-	})
-	token, err := j.SignedString()
-	if err != nil {
-		t.Fatal(err)
-	}
-	fmt.Println(token)
+func TestSign(t *testing.T) {
+	j := New[UserInfo]([]byte("secret"), jwt.SigningMethodHS256)
 
-	j2 := NewJWT([]byte("battle"), jwt.SigningMethodHS256)
-	var tokenData = &N{
-		RegisteredClaims: &jwt.RegisteredClaims{},
-	}
-	j2, err = j2.Parse(token, tokenData)
+	token, err := j.Sign(UserInfo{ID: 1, Name: "alice", Role: "admin"},
+		WithExpiry(2*time.Hour),
+		WithIssuer("myapp"),
+		WithSubject("auth"),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fmt.Println(tokenData.Id)
+	fmt.Println("token:", token)
+
+	data, rc, err := j.Parse(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Printf("data: %+v\n", data)
+	fmt.Printf("issuer: %s, subject: %s, expires: %s\n", rc.Issuer, rc.Subject, rc.ExpiresAt)
+}
+
+func TestParse_WrongKey(t *testing.T) {
+	j1 := New[UserInfo]([]byte("secret"), jwt.SigningMethodHS256)
+	j2 := New[UserInfo]([]byte("wrongkey"), jwt.SigningMethodHS256)
+
+	token, err := j1.Sign(UserInfo{ID: 2, Name: "bob", Role: "user"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = j2.Parse(token)
+	if err == nil {
+		t.Fatal("expected error with wrong key")
+	}
+	fmt.Println("wrong key error:", err)
+}
+
+func TestParse_Expired(t *testing.T) {
+	j := New[UserInfo]([]byte("secret"), jwt.SigningMethodHS256)
+
+	token, err := j.Sign(UserInfo{ID: 3}, WithExpiry(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = j.Parse(token)
+	if err == nil {
+		t.Fatal("expected expiry error")
+	}
+	fmt.Println("expired error:", err)
 }
