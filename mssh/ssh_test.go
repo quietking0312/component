@@ -2,74 +2,93 @@ package mssh
 
 import (
 	"fmt"
-	"os"
-	"path"
 	"testing"
 )
 
-func TestCli_Connect(t *testing.T) {
-	cli := &Cli{
-		User: "ubuntu",
-		Pwd:  "",
-		Addr: "",
-	}
-	if err := cli.Connect(); err != nil {
-		t.Fatal(err)
-	}
-	result, err := cli.Run("ls -l")
-	if err != nil {
-		t.Fatal(err)
-	}
-	fmt.Println(result)
-	defer cli.client.Close()
-	if err := cli.UploadFile("ssh.go", "/home/ubuntu"); err != nil {
-		t.Fatal(err)
-	}
-	result, err = cli.Run("ls -l")
-	if err != nil {
-		t.Fatal(err)
-	}
-	fmt.Println(result)
+// 以下测试需要真实 SSH 服务器，填入实际地址和密码后运行。
 
-	if err := cli.DownloadFile("/home/ubuntu/ssh.go", "./", "temp.text"); err != nil {
+var testCfg = &Config{
+	User:     "ubuntu",
+	Password: "",
+	Addr:     "127.0.0.1:22",
+}
+
+func TestRun(t *testing.T) {
+	cli, err := New(testCfg)
+	if err != nil {
+		t.Skip("no ssh server:", err)
+	}
+	defer cli.Close()
+
+	out, err := cli.Run("uname -a && ls -lh /tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println(out)
+}
+
+// TestShell 开启交互式 Shell，支持 vim/top 等 PTY 程序。
+// 本地终端会切换为 raw 模式，退出后自动恢复。
+func TestShell(t *testing.T) {
+	cli, err := New(testCfg)
+	if err != nil {
+		t.Skip("no ssh server:", err)
+	}
+	defer cli.Close()
+
+	if err := cli.Shell(nil); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestCli_UploadFileAndProgress(t *testing.T) {
-	cli := &Cli{
-		User: "ubuntu",
-		Pwd:  "#nmp3?c;G+L!Wy2R",
-		Addr: "152.136.171.104:22",
+func TestUpload(t *testing.T) {
+	cli, err := New(testCfg)
+	if err != nil {
+		t.Skip("no ssh server:", err)
 	}
-	if err := cli.Connect(); err != nil {
-		t.Fatal(err)
-	}
-	defer cli.client.Close()
+	defer cli.Close()
 
-	result, err := cli.Run("ls -l")
+	err = cli.Upload("ssh.go", "/tmp/", &UploadOption{
+		OnProgress: func(written int64) {
+			fmt.Printf("uploaded %d bytes\n", written)
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	fmt.Println(result)
+	fmt.Println("upload done")
+}
 
-	srcFile, err := os.Open("D:\\myprojects\\ops\\ops.conf")
+func TestDownload(t *testing.T) {
+	cli, err := New(testCfg)
 	if err != nil {
-		fmt.Println("open:", err)
+		t.Skip("no ssh server:", err)
+	}
+	defer cli.Close()
+
+	err = cli.Download("/tmp/ssh.go", "./", &UploadOption{
+		OnProgress: func(written int64) {
+			fmt.Printf("downloaded %d bytes\n", written)
+		},
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	s, _ := srcFile.Stat()
-	fmt.Println("totalSize: ", s.Size())
-	defer srcFile.Close()
+	fmt.Println("download done")
+}
 
-	ch := make(chan int64, 1000)
-	go func() {
-		if err := cli.UploadFileAndProgress(srcFile, path.Join("/data", path.Base("hello.conf")), ch); err != nil {
-			t.Error(err)
-			return
-		}
-	}()
-	for progress := range ch {
-		fmt.Printf("upload progress: %d bytes\n", progress)
+func TestReadDir(t *testing.T) {
+	cli, err := New(testCfg)
+	if err != nil {
+		t.Skip("no ssh server:", err)
+	}
+	defer cli.Close()
+
+	entries, err := cli.ReadDir("/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		fmt.Printf("%s\t%d\t%s\n", e.Mode(), e.Size(), e.Name())
 	}
 }
