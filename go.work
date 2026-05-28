@@ -18,6 +18,7 @@ use (
 	./mhttp
 	./middleware
 	./mjwt
+	./mlb
 	./mlog
 	./mmath
 	./mmen
