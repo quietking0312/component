@@ -11,28 +11,15 @@ func defaultRedisOption() *redis.Options {
 	return &redis.Options{
 		Network:         "tcp",
 		Addr:            "127.0.0.1:6379",
-		Username:        "",
-		Password:        "",
-		DB:              0,
-		MaxRetries:      3,                    // 最大重试测试； -1 禁用重试
-		MinRetryBackoff: 8 * time.Millisecond, // 重试间隔最小值
+		MaxRetries:      3,
+		MinRetryBackoff: 8 * time.Millisecond,
 		MaxRetryBackoff: 512 * time.Millisecond,
-		// 新连接超时时间
-		DialTimeout: 5 * time.Second,
-		// 读取超时
-		ReadTimeout: 3 * time.Second,
-		//写入超时
-		WriteTimeout: 3 * time.Second,
-		// 连接池大小
-		PoolSize: runtime.NumCPU() * 10,
-		// 空闲连接数
-		MinIdleConns: 5,
-		// 池超时
-		PoolTimeout: 4 * time.Second,
-		// TLS 设置
-		TLSConfig: nil,
-		// 限制器
-		Limiter: nil,
+		DialTimeout:     5 * time.Second,
+		ReadTimeout:     3 * time.Second,
+		WriteTimeout:    3 * time.Second,
+		PoolSize:        runtime.NumCPU() * 10,
+		MinIdleConns:    5,
+		PoolTimeout:     4 * time.Second,
 	}
 }
 
@@ -43,13 +30,10 @@ func NewRedisClient(opts ...RedisOption) (*redis.Client, error) {
 	for _, opt := range opts {
 		opt(redisCfg)
 	}
-
 	redisClient := redis.NewClient(redisCfg)
-	for i := 0; i < redisCfg.PoolSize; i++ {
-		_, err := redisClient.Ping(context.Background()).Result()
-		if err != nil {
-			return nil, err
-		}
+	if err := redisClient.Ping(context.Background()).Err(); err != nil {
+		_ = redisClient.Close()
+		return nil, err
 	}
 	return redisClient, nil
 }
@@ -57,25 +41,15 @@ func NewRedisClient(opts ...RedisOption) (*redis.Client, error) {
 func defaultRedisClusterOption() *redis.ClusterOptions {
 	return &redis.ClusterOptions{
 		Addrs:           []string{"127.0.0.1:6379"},
-		Username:        "",
-		Password:        "",
-		MaxRetries:      3,                // 最大重试测试； -1 禁用重试
-		MinRetryBackoff: time.Duration(8), // 重试直接的最小
-		MaxRetryBackoff: time.Duration(512),
-		// 新连接超时时间
-		DialTimeout: 5 * time.Second,
-		// 读取超时
-		ReadTimeout: 3 * time.Second,
-		//写入超时
-		WriteTimeout: 3 * time.Second,
-		// 连接池大小
-		PoolSize: runtime.NumCPU() * 10,
-		// 空闲连接数
-		MinIdleConns: 5,
-		// 池超时
-		PoolTimeout: 4 * time.Second,
-		// TLS 设置
-		TLSConfig: nil,
+		MaxRetries:      3,
+		MinRetryBackoff: 8 * time.Millisecond,
+		MaxRetryBackoff: 512 * time.Millisecond,
+		DialTimeout:     5 * time.Second,
+		ReadTimeout:     3 * time.Second,
+		WriteTimeout:    3 * time.Second,
+		PoolSize:        runtime.NumCPU() * 10,
+		MinIdleConns:    5,
+		PoolTimeout:     4 * time.Second,
 	}
 }
 
@@ -91,8 +65,39 @@ func NewRedisClusterClient(opts ...ClusterOption) (*redis.ClusterClient, error) 
 		return client.Ping(ctx).Err()
 	})
 	if err != nil {
+		_ = redisClusterClient.Close()
 		return nil, err
 	}
-
 	return redisClusterClient, nil
+}
+
+func defaultRedisSentinelOption() *redis.FailoverOptions {
+	return &redis.FailoverOptions{
+		MasterName:      "mymaster",
+		SentinelAddrs:   []string{"127.0.0.1:26379"},
+		MaxRetries:      3,
+		MinRetryBackoff: 8 * time.Millisecond,
+		MaxRetryBackoff: 512 * time.Millisecond,
+		DialTimeout:     5 * time.Second,
+		ReadTimeout:     3 * time.Second,
+		WriteTimeout:    3 * time.Second,
+		PoolSize:        runtime.NumCPU() * 10,
+		MinIdleConns:    5,
+		PoolTimeout:     4 * time.Second,
+	}
+}
+
+type SentinelOption func(cfg *redis.FailoverOptions)
+
+func NewRedisSentinelClient(opts ...SentinelOption) (*redis.Client, error) {
+	cfg := defaultRedisSentinelOption()
+	for _, opt := range opts {
+		opt(cfg)
+	}
+	client := redis.NewFailoverClient(cfg)
+	if err := client.Ping(context.Background()).Err(); err != nil {
+		_ = client.Close()
+		return nil, err
+	}
+	return client, nil
 }

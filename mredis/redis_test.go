@@ -22,14 +22,14 @@ func TestNewRedisClient(t *testing.T) {
 		}
 	}
 	fmt.Println(val)
+
 	var wg sync.WaitGroup
+	wg.Add(2)
 	go func() {
-		wg.Add(1)
 		defer wg.Done()
 		txFunc := func(tx *redis.Tx) error {
 			cmds, err := tx.TxPipelined(context.Background(), func(pipeliner redis.Pipeliner) error {
 				pipeResult := pipeliner.Set(context.Background(), "key", "11", 10*time.Second).Err()
-
 				fmt.Println(pipeResult)
 				return nil
 			})
@@ -45,11 +45,10 @@ func TestNewRedisClient(t *testing.T) {
 		err1 := _client.Watch(context.Background(), txFunc, "key")
 		if err1 != nil {
 			fmt.Println("err1", err1)
-			t.Fatal(err1)
+			t.Error(err1)
 		}
 	}()
 	go func() {
-		wg.Add(1)
 		defer wg.Done()
 		err2 := _client.Watch(context.Background(), func(tx *redis.Tx) error {
 			cmds, err := tx.TxPipelined(context.Background(), func(pipeliner redis.Pipeliner) error {
