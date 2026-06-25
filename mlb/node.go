@@ -6,13 +6,14 @@ import (
 
 // Node 表示一个逻辑服务器节点
 type Node struct {
-	ID                string      // 节点唯一标识
-	Addr              string      // 节点地址
-	weight            int         // 基础权重（私有，防止外部并发写后 rebuildRing 未感知）
-	maxLoad           int64       // 最大承载用户数（构造后不可变，无需 atomic）
-	overloadThreshold float64     // 过载阈值，默认 0.95
-	active            int64       // 当前活跃用户数
-	online            atomic.Bool // 是否在线（atomic，消除裸 bool 竞争）
+	ID                string            // 节点唯一标识
+	Addr              string            // 节点地址
+	Tags              map[string]string // 节点标签，可用于版本、区域等业务筛选
+	weight            int               // 基础权重（私有，防止外部并发写后 rebuildRing 未感知）
+	maxLoad           int64             // 最大承载用户数（构造后不可变，无需 atomic）
+	overloadThreshold float64           // 过载阈值，默认 0.95
+	active            int64             // 当前活跃用户数
+	online            atomic.Bool       // 是否在线（atomic，消除裸 bool 竞争）
 }
 
 // NodeOption 节点配置选项
@@ -25,6 +26,20 @@ func WithOverloadThreshold(threshold float64) NodeOption {
 	return func(n *Node) {
 		if threshold > 0 && threshold <= 1 {
 			n.overloadThreshold = threshold
+		}
+	}
+}
+
+// WithTags 为节点设置标签，可用于 Pick 时的条件筛选。
+// 传入的 tags 会被拷贝到节点中，避免外部后续修改影响节点状态。
+func WithTags(tags map[string]string) NodeOption {
+	return func(n *Node) {
+		if len(tags) == 0 {
+			return
+		}
+		n.Tags = make(map[string]string, len(tags))
+		for k, v := range tags {
+			n.Tags[k] = v
 		}
 	}
 }
@@ -116,6 +131,21 @@ func (n *Node) SetOnline(online bool) {
 // IsOnline 返回节点是否在线
 func (n *Node) IsOnline() bool {
 	return n.online.Load()
+}
+
+// Tag 返回指定标签的值，不存在时 ok 为 false。
+func (n *Node) Tag(key string) (string, bool) {
+	if n == nil || n.Tags == nil {
+		return "", false
+	}
+	v, ok := n.Tags[key]
+	return v, ok
+}
+
+// HasTag 判断节点是否包含指定键值对的标签。
+func (n *Node) HasTag(key, value string) bool {
+	v, ok := n.Tag(key)
+	return ok && v == value
 }
 
 // EffectiveWeight 计算有效权重

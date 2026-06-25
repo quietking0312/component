@@ -33,6 +33,30 @@ type Balancer struct {
 // Option 配置选项
 type Option func(*Balancer)
 
+// FilterFunc 节点过滤函数，返回 true 表示该节点可被选中。
+type FilterFunc func(*Node) bool
+
+// PickOption 为 Pick / PickAndBind 提供单次调用的选项。
+type PickOption func(*pickConfig)
+
+type pickConfig struct {
+	filter FilterFunc
+}
+
+// WithFilter 设置 Pick 时的节点过滤条件。
+// 只有 filter(n) == true 的节点才会参与本次选择，常用于按版本、区域等标签筛选。
+//
+// 示例：只选择版本为 "v2" 的节点
+//
+//	node, err := bl.Pick(userID, mlb.WithFilter(func(n *mlb.Node) bool {
+//	    return n.HasTag("version", "v2")
+//	}))
+func WithFilter(filter FilterFunc) PickOption {
+	return func(c *pickConfig) {
+		c.filter = filter
+	}
+}
+
 // WithVnodeFactor 设置每单位权重的虚拟节点数（默认 200）
 // 虚拟节点数 = 节点权重 * vnodeFactor
 // 值越大分布越均匀，但内存和计算开销越大
@@ -163,7 +187,14 @@ func (b *Balancer) OnlineNodes() []*Node {
 //     这样既保持了一致性哈希的局部稳定性，又能让新用户向负载低的节点倾斜
 //  5. 若候选全部过载，扩大范围继续找第一个不过载的在线节点
 //  6. 若所有在线节点都过载，返回负载最低的在线节点（兜底）
-func (b *Balancer) Pick(userID string) (*Node, error) {
+//
+// 可通过 opts 传入 WithFilter 对节点进行业务层筛选，例如按版本标签筛选。
+func (b *Balancer) Pick(userID string, opts ...PickOption) (*Node, error) {
+	cfg := &pickConfig{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -174,7 +205,11 @@ func (b *Balancer) Pick(userID string) (*Node, error) {
 	h := Hash(userID)
 	idx := b.search(h)
 
-	// 收集候选节点（不同物理节点）
+	match := func(node *Node) bool {
+		return node.IsOnline() && (cfg.filter == nil || cfg.filter(node))
+	}
+
+	// 收集候选节点（不同物理节点），并应用过滤条件
 	candidates := make([]*Node, 0, b.pickFactor)
 	seen := make(map[string]bool)
 	n := len(b.hashRing)
@@ -186,7 +221,7 @@ func (b *Balancer) Pick(userID string) (*Node, error) {
 			continue
 		}
 		seen[nodeID] = true
-		if node, ok := b.nodes[nodeID]; ok && node.IsOnline() {
+		if node, ok := b.nodes[nodeID]; ok && match(node) {
 			candidates = append(candidates, node)
 		}
 	}
@@ -205,7 +240,7 @@ func (b *Balancer) Pick(userID string) (*Node, error) {
 		return weightedPick(h, healthy), nil
 	}
 
-	// 候选全部过载，在哈希环上顺时针找最近的未过载节点
+	// 候选全部过载，在哈希环上顺时针找最近的未过载节点（仍受过滤条件约束）
 	seen2 := make(map[string]bool)
 	for i := 0; i < n; i++ {
 		vnodeIdx := (idx + i) % n
@@ -214,15 +249,15 @@ func (b *Balancer) Pick(userID string) (*Node, error) {
 			continue
 		}
 		seen2[nodeID] = true
-		if node, ok := b.nodes[nodeID]; ok && node.IsOnline() && !node.IsOverloaded() {
+		if node, ok := b.nodes[nodeID]; ok && match(node) && !node.IsOverloaded() {
 			return node, nil
 		}
 	}
 
-	// 所有在线节点均过载，从全部在线节点中选负载最低的兜底
+	// 所有符合条件的在线节点均过载，从中选负载最低的兜底
 	var best *Node
 	for id := range b.onlineIDs {
-		if node, ok := b.nodes[id]; ok {
+		if node, ok := b.nodes[id]; ok && match(node) {
 			if best == nil || node.LoadRate() < best.LoadRate() {
 				best = node
 			}
@@ -295,8 +330,8 @@ func weightedPick(hash uint64, nodes []*Node) *Node {
 //
 // ⚠️ 注意：这不是原子操作。Pick 返回后 RLock 已释放，到 IncrActive 之间
 // 节点可能被 Offline。如果对此敏感，建议先调用 Pick，确认节点仍在线后再调用 IncrActive。
-func (b *Balancer) PickAndBind(userID string) (*Node, error) {
-	node, err := b.Pick(userID)
+func (b *Balancer) PickAndBind(userID string, opts ...PickOption) (*Node, error) {
+	node, err := b.Pick(userID, opts...)
 	if err != nil {
 		return nil, err
 	}
