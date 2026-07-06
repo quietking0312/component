@@ -269,6 +269,49 @@ server.ConnCount()            // 当前连接数
 | `WithReadTimeout` | `60s` | 读超时 |
 | `WithWriteTimeout` | `10s` | 写超时 |
 | `WithHeartbeat` | `30s / 90s` | 心跳间隔 / 超时 |
+| `WithGWSConfig` | `nil` | gws 服务端详细配置 |
+
+### GWS 配置
+
+当 `ConnType` 为 `ConnTypeGWS` 时，`gws.ServerOption` 可以通过配置文件决定。
+
+`msock.GWSConfig` 已内置 `json` / `yaml` / `mapstructure` 标签，你可以使用任意配置库（如 `encoding/json`、`gopkg.in/yaml.v3`、viper 等）反序列化到该结构体，再通过 `WithGWSConfig` 传入。
+
+配置文件示例 `gws.yaml`：
+
+```yaml
+gws:
+  read_buffer_size: 8192
+  read_max_payload_size: 16384
+  write_max_payload_size: 16384
+  parallel_enabled: true
+  parallel_golimit: 0
+  check_utf8_enabled: false
+  handshake_timeout: 10s
+  sub_protocols:
+    - chat
+  response_header:
+    X-Custom:
+      - value
+  permessage_deflate:
+    enabled: false
+```
+
+使用示例：
+
+```go
+gwsCfg := &msock.GWSConfig{}
+// 使用你自己的配置工具加载到 gwsCfg，例如：
+// yaml.Unmarshal(data, gwsCfg)
+
+server, err := msock.NewServer(
+    msock.WithAddress(":8080"),
+    msock.WithConnType(msock.ConnTypeGWS),
+    msock.WithGWSConfig(gwsCfg),
+)
+```
+
+未显式配置的字段可先用 `msock.DefaultGWSConfig()` 作为基础，再反序列化覆盖。如果完全不传 `WithGWSConfig`，则保持与历史行为一致的默认值。
 
 ## 日志
 

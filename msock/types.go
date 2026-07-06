@@ -132,6 +132,8 @@ type ServerConfig struct {
 	HeartbeatPongData func(ping Message) []byte
 	// KCP 配置，ConnType 为 ConnTypeKCP 时生效
 	KCPConfig *KCPConfig
+	// GWS 配置，ConnType 为 ConnTypeGWS 时生效
+	GWSConfig *GWSConfig
 }
 
 // DefaultServerConfig 返回默认服务器配置
@@ -150,6 +152,7 @@ func DefaultServerConfig() *ServerConfig {
 		HeartbeatPingID:   0xFFFFFFFE,
 		HeartbeatPongID:   0xFFFFFFFF,
 		KCPConfig:         DefaultKCPConfig(),
+		GWSConfig:         nil,
 	}
 }
 
@@ -244,5 +247,12 @@ func WithHeartbeatPongData(fn func(ping Message) []byte) ServerOption {
 func WithKCPConfig(cfg *KCPConfig) ServerOption {
 	return func(c *ServerConfig) {
 		c.KCPConfig = cfg
+	}
+}
+
+// WithGWSConfig 设置 gws 服务端配置
+func WithGWSConfig(cfg *GWSConfig) ServerOption {
+	return func(c *ServerConfig) {
+		c.GWSConfig = cfg
 	}
 }

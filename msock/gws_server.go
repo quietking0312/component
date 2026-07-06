@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"time"
 
 	"github.com/lxzan/gws"
 )
@@ -97,17 +96,7 @@ func (h *gwsEventHandler) OnMessage(socket *gws.Conn, message *gws.Message) {
 func (s *Server) runGWSServer() error {
 	handler := &gwsEventHandler{server: s}
 
-	upgrader := gws.NewUpgrader(handler, &gws.ServerOption{
-		ReadBufferSize:      s.config.ReadBufferSize,
-		ReadMaxPayloadSize:  s.config.ReadBufferSize * 2,
-		WriteMaxPayloadSize: s.config.WriteBufferSize * 2,
-		Recovery:            gws.Recovery,
-		HandshakeTimeout:    10 * time.Second,
-		ParallelEnabled:     true,
-		Authorize: func(r *http.Request, session gws.SessionStorage) bool {
-			return true
-		},
-	})
+	upgrader := gws.NewUpgrader(handler, buildGWSServerOption(s.config))
 
 	listener, err := net.Listen("tcp", s.config.Address)
 	if err != nil {
