@@ -3,12 +3,13 @@ name: release-submodules
 displayName: Release Submodules
 
 # 只在推送 release/v* 标签时触发
+# 注意：Gitee Go 需要先在仓库设置里手动开通，否则本文件不会生效
 triggers:
   trigger: auto
   push:
     tags:
-      prefix:
-        - release/v
+      include:
+        - '^release/v.*'
 
 # 需要在 Gitee 仓库设置中配置 GITEE_TOKEN（具备仓库写权限的私人令牌）
 variables:
@@ -24,7 +25,7 @@ stages:
       - step: build@gcc
         name: tag_submodules
         displayName: 打子模块标签
-        # GCC 镜像基于 Ubuntu，自带 git/wget/zip/unzip/jq 等常用工具，可当作通用 Shell 环境使用
+        # build@gcc 镜像基于 Ubuntu，自带 git/wget/zip/unzip/jq 等常用工具，可当作通用 Shell 环境使用
         gccVersion: 9.4
         commands:
           - |

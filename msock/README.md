@@ -313,6 +313,20 @@ server, err := msock.NewServer(
 
 未显式配置的字段可先用 `msock.DefaultGWSConfig()` 作为基础，再反序列化覆盖。如果完全不传 `WithGWSConfig`，则保持与历史行为一致的默认值。
 
+WebSocket 原生 ping/pong 帧也可以通过 `GWSConfig` 自定义：
+
+```go
+gwsCfg.OnPing = func(payload []byte) []byte {
+    // 处理对端发来的 ping payload，返回的值会作为 pong 帧回给对方
+    return []byte("pong")
+}
+gwsCfg.OnPong = func(payload []byte) {
+    // 处理对端发来的 pong payload
+}
+```
+
+注意：`OnPing` / `OnPong` 控制的是 WebSocket 协议层的 ping/pong 帧；msock 自身的应用层心跳（`HeartbeatPingID` / `HeartbeatPongID`）不受它们影响。
+
 ## 日志
 
 实现 `Logger` 接口对接任意日志库：

@@ -39,6 +39,12 @@ type GWSConfig struct {
 	Authorize func(r *http.Request, session gws.SessionStorage) bool `mapstructure:"-" json:"-" yaml:"-"`
 	// NewSession 自定义 SessionStorage 工厂，为 nil 时使用 gws 默认实现。
 	NewSession func() gws.SessionStorage `mapstructure:"-" json:"-" yaml:"-"`
+
+	// OnPing 收到 WebSocket ping 帧时的回调。
+	// 返回的 payload 会作为 pong 帧回复给对端；为 nil 时使用默认空 pong。
+	OnPing func(payload []byte) []byte `mapstructure:"-" json:"-" yaml:"-"`
+	// OnPong 收到 WebSocket pong 帧时的回调。
+	OnPong func(payload []byte) `mapstructure:"-" json:"-" yaml:"-"`
 }
 
 // GWSPermessageDeflateConfig 是 gws.PermessageDeflate 的可配置子集。

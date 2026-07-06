@@ -545,10 +545,18 @@ func (h *gwsClientEventHandler) OnClose(socket *gws.Conn, err error) {
 }
 
 func (h *gwsClientEventHandler) OnPing(socket *gws.Conn, payload []byte) {
+	if cfg := h.client.config.GWSConfig; cfg != nil && cfg.OnPing != nil {
+		_ = socket.WritePong(cfg.OnPing(payload))
+		return
+	}
 	_ = socket.WritePong(nil)
 }
 
-func (h *gwsClientEventHandler) OnPong(socket *gws.Conn, payload []byte) {}
+func (h *gwsClientEventHandler) OnPong(socket *gws.Conn, payload []byte) {
+	if cfg := h.client.config.GWSConfig; cfg != nil && cfg.OnPong != nil {
+		cfg.OnPong(payload)
+	}
+}
 
 func (h *gwsClientEventHandler) OnMessage(socket *gws.Conn, message *gws.Message) {
 	defer message.Close()

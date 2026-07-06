@@ -59,13 +59,21 @@ func (h *gwsEventHandler) OnClose(socket *gws.Conn, err error) {
 	}
 }
 
-// OnPing 心跳探测事件
+// OnPing WebSocket ping 帧事件
 func (h *gwsEventHandler) OnPing(socket *gws.Conn, payload []byte) {
+	if cfg := h.server.config.GWSConfig; cfg != nil && cfg.OnPing != nil {
+		_ = socket.WritePong(cfg.OnPing(payload))
+		return
+	}
 	_ = socket.WritePong(nil)
 }
 
-// OnPong 心跳响应事件
-func (h *gwsEventHandler) OnPong(socket *gws.Conn, payload []byte) {}
+// OnPong WebSocket pong 帧事件
+func (h *gwsEventHandler) OnPong(socket *gws.Conn, payload []byte) {
+	if cfg := h.server.config.GWSConfig; cfg != nil && cfg.OnPong != nil {
+		cfg.OnPong(payload)
+	}
+}
 
 // OnMessage 消息事件
 func (h *gwsEventHandler) OnMessage(socket *gws.Conn, message *gws.Message) {
