@@ -1,0 +1,73 @@
+version: '1.0'
+name: release-submodules
+displayName: Release Submodules
+
+# 只在推送 release/v* 标签时触发
+triggers:
+  trigger: auto
+  push:
+    tags:
+      prefix:
+        - release/v
+
+# 需要在 Gitee 仓库设置中配置 GITEE_TOKEN（具备仓库写权限的私人令牌）
+variables:
+  global:
+    - GITEE_TOKEN
+
+stages:
+  - name: release
+    displayName: 发布子模块标签
+    strategy: naturally
+    trigger: auto
+    steps:
+      - step: build@gcc
+        name: tag_submodules
+        displayName: 打子模块标签
+        # GCC 镜像基于 Ubuntu，自带 git/wget/zip/unzip/jq 等常用工具，可当作通用 Shell 环境使用
+        gccVersion: 9.4
+        commands:
+          - |
+            set -euo pipefail
+
+            REF_NAME=$(git describe --tags --exact-match 2>/dev/null || true)
+            if [ -z "$REF_NAME" ]; then
+              echo "Not running on a tag, skipping"
+              exit 0
+            fi
+
+            VERSION="${REF_NAME#release/}"
+            echo "Releasing version: $VERSION (from tag: $REF_NAME)"
+
+            MODULES=(
+              m2fa marr mbar mcachedb mconf mcron mcyptos
+              memail mencoding merr mexcel mhttp middleware
+              mjwt mlog mmath mmen mpubsub mrand mredis
+              mrpc msnowflake msock msql mssh mstorage
+              mstore mtime mtimewheel mtool mutils mlb
+            )
+
+            git config user.name "gitee-ci"
+            git config user.email "gitee-ci@noreply.gitee.com"
+
+            REMOTE_URL=$(git remote get-url origin)
+            # 如果是 SSH 地址，先转成 HTTPS
+            if [[ "$REMOTE_URL" == git@* ]]; then
+              REMOTE_URL="https://${REMOTE_URL#git@}"
+              REMOTE_URL="${REMOTE_URL/:/\/}"
+            fi
+            # 去掉可能已存在的用户信息，再统一加上 token
+            REMOTE_URL=$(echo "$REMOTE_URL" | sed -E 's#https?://[^@]+@#https://#')
+            REMOTE_URL="${REMOTE_URL/https:\/\//https:\/\/oauth2:${GITEE_TOKEN}@}"
+            git remote set-url origin "$REMOTE_URL"
+
+            for mod in "${MODULES[@]}"; do
+              TAG="${mod}/${VERSION}"
+              if git rev-parse "$TAG" >/dev/null 2>&1; then
+                echo "Tag $TAG already exists, skipping"
+              else
+                git tag "$TAG"
+                git push origin "$TAG"
+                echo "Created and pushed: $TAG"
+              fi
+            done
