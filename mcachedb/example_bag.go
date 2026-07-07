@@ -2,6 +2,7 @@ package mcachedb
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/jmoiron/sqlx"
@@ -27,11 +28,19 @@ func NewBagItemEntity(uid, itemID, count int64) *BagItemEntity {
 
 func (e *BagItemEntity) Copy() Entity {
 	return &BagItemEntity{
-		BaseEntity: *e.BaseEntity.Copy().(*BaseEntity),
+		BaseEntity: *e.BaseEntity.Copy(),
 		UID:        e.UID,
 		ItemID:     e.ItemID,
 		Count:      e.Count,
 	}
+}
+
+func (e *BagItemEntity) Marshal() ([]byte, error) {
+	return json.Marshal(e)
+}
+
+func (e *BagItemEntity) Unmarshal(data []byte) error {
+	return json.Unmarshal(data, e)
 }
 
 // ---------- BagDBStore：针对 user_bag 表的 DBStore ----------
@@ -218,10 +227,18 @@ func NewGoldEntity(uid, gold int64) *GoldEntity {
 }
 func (e *GoldEntity) Copy() Entity {
 	return &GoldEntity{
-		BaseEntity: *e.BaseEntity.Copy().(*BaseEntity),
+		BaseEntity: *e.BaseEntity.Copy(),
 		UID:        e.UID,
 		Gold:       e.Gold,
 	}
+}
+
+func (e *GoldEntity) Marshal() ([]byte, error) {
+	return json.Marshal(e)
+}
+
+func (e *GoldEntity) Unmarshal(data []byte) error {
+	return json.Unmarshal(data, e)
 }
 
 // BuyItemExample 用 DistTx 实现扣金币 + 加背包道具

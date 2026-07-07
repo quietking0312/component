@@ -28,10 +28,18 @@ func NewMockEntity(id, name string, value int) *MockEntity {
 
 func (m *MockEntity) Copy() Entity {
 	return &MockEntity{
-		BaseEntity: *m.BaseEntity.Copy().(*BaseEntity),
+		BaseEntity: *m.BaseEntity.Copy(),
 		Name:       m.Name,
 		Value:      m.Value,
 	}
+}
+
+func (m *MockEntity) Marshal() ([]byte, error) {
+	return json.Marshal(m)
+}
+
+func (m *MockEntity) Unmarshal(data []byte) error {
+	return json.Unmarshal(data, m)
 }
 
 // MockRedisStore 模拟 Redis 存储
@@ -260,10 +268,9 @@ func TestMultiCache_Basic(t *testing.T) {
 		L1MaxSize:     1000,
 		SyncInterval:  100 * time.Millisecond,
 		FlushInterval: 100 * time.Millisecond,
-		L2RedisConfig: nil,
 	}
 
-	cache, err := NewMultiCache(dbStore, config)
+	cache, err := NewMultiCache(dbStore, nil, config)
 	assert.NoError(t, err)
 	defer cache.Close()
 
@@ -291,10 +298,9 @@ func TestMultiCache_SetAndGet(t *testing.T) {
 		L1MaxSize:     1000,
 		SyncInterval:  100 * time.Millisecond,
 		FlushInterval: 100 * time.Millisecond,
-		L2RedisConfig: nil,
 	}
 
-	cache, err := NewMultiCache(dbStore, config)
+	cache, err := NewMultiCache(dbStore, nil, config)
 	assert.NoError(t, err)
 	defer cache.Close()
 
@@ -314,25 +320,28 @@ func TestMultiCache_SetAndGet(t *testing.T) {
 // TestMultiCache_WriteToL2OnSet 测试写L1时同步写L2
 func TestMultiCache_WriteToL2OnSet(t *testing.T) {
 	dbStore := NewMockDBStore()
+	l2Store := NewMockRedisStore()
 
-	// 创建一个带 Mock L2 的 MultiCache
 	config := &MultiCacheConfig{
 		L1MaxSize:      1000,
 		WriteToL2OnSet: true, // 关键：同步写L2
 		SyncInterval:   1 * time.Hour,
 		FlushInterval:  1 * time.Hour,
-		L2RedisConfig:  &RedisConfig{Addr: "localhost:6379"}, // 会连接失败，但会被 mock 替换
-		L2Downgrade:    false,
 	}
 
-	cache, err := NewMultiCache(dbStore, config)
+	cache, err := NewMultiCache(dbStore, l2Store, config)
 	assert.NoError(t, err)
 	defer cache.Close()
 
-	// 替换 l2 为 mock（因为真实 Redis 可能没有启动）
-	// 注意：这里只是测试概念，实际使用中 Redis 会真的写入
-	// 由于构造后替换字段不太优雅，我们通过另一种方式测试：
-	// 设置一个能连接上的 Redis，或者跳过这个测试
+	entity := NewMockEntity("1", "alice", 100)
+	err = cache.Set(entity)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, l2Store.GetSetOps())
+
+	got, err := l2Store.Get(context.Background(), "1")
+	assert.NoError(t, err)
+	assert.NotNil(t, got)
+	assert.Equal(t, "alice", got.(*MockEntity).Name)
 }
 
 // TestMultiCache_Delete 测试删除
@@ -344,10 +353,9 @@ func TestMultiCache_Delete(t *testing.T) {
 		L1MaxSize:     1000,
 		SyncInterval:  100 * time.Millisecond,
 		FlushInterval: 100 * time.Millisecond,
-		L2RedisConfig: nil,
 	}
 
-	cache, err := NewMultiCache(dbStore, config)
+	cache, err := NewMultiCache(dbStore, nil, config)
 	assert.NoError(t, err)
 	defer cache.Close()
 
@@ -371,11 +379,10 @@ func TestMultiCache_CacheAsideMode(t *testing.T) {
 		L1MaxSize:     1000,
 		SyncInterval:  1 * time.Hour,
 		FlushInterval: 1 * time.Hour,
-		L2RedisConfig: nil, // 不依赖 Redis，专注验证 L1/L3 行为
 		WriteMode:     WriteModeCacheAside,
 	}
 
-	cache, err := NewMultiCache(dbStore, config)
+	cache, err := NewMultiCache(dbStore, nil, config)
 	assert.NoError(t, err)
 	defer cache.Close()
 
@@ -432,10 +439,9 @@ func TestMultiCache_BackfillNotDirty(t *testing.T) {
 		L1MaxSize:     1000,
 		SyncInterval:  1 * time.Hour,
 		FlushInterval: 100 * time.Millisecond,
-		L2RedisConfig: nil,
 	}
 
-	cache, err := NewMultiCache(dbStore, config)
+	cache, err := NewMultiCache(dbStore, nil, config)
 	assert.NoError(t, err)
 	defer cache.Close()
 
@@ -458,7 +464,7 @@ func TestRedisStore_TypePreservation(t *testing.T) {
 	entity := NewMockEntity("1", "alice", 100)
 
 	// 序列化
-	data, err := store.marshalEntity(entity)
+	data, err := entity.Marshal()
 	assert.NoError(t, err)
 
 	// 反序列化应保持具体类型
@@ -467,18 +473,6 @@ func TestRedisStore_TypePreservation(t *testing.T) {
 	assert.IsType(t, &MockEntity{}, got)
 	assert.Equal(t, "alice", got.(*MockEntity).Name)
 	assert.Equal(t, 100, got.(*MockEntity).Value)
-
-	// 旧格式（EntityWrapper）应能降级解析
-	oldWrapper := &EntityWrapper{
-		BaseEntity: *NewBaseEntity("2"),
-		Data:       NewMockEntity("2", "bob", 200),
-	}
-	oldData, err := json.Marshal(oldWrapper)
-	assert.NoError(t, err)
-
-	got2, err := store.unmarshalEntity(oldData)
-	assert.NoError(t, err)
-	assert.IsType(t, &EntityWrapper{}, got2)
 }
 
 // TestMultiCache_PendingDeleteNotBackfilled 验证已标记删除但未 flush 的 key 不会被回填
@@ -490,10 +484,9 @@ func TestMultiCache_PendingDeleteNotBackfilled(t *testing.T) {
 		L1MaxSize:     1000,
 		SyncInterval:  1 * time.Hour,
 		FlushInterval: 100 * time.Millisecond,
-		L2RedisConfig: nil,
 	}
 
-	cache, err := NewMultiCache(dbStore, config)
+	cache, err := NewMultiCache(dbStore, nil, config)
 	assert.NoError(t, err)
 	defer cache.Close()
 
@@ -529,10 +522,9 @@ func TestMultiCache_L2Recovery(t *testing.T) {
 	config := &MultiCacheConfig{
 		L1MaxSize:     1000,
 		FlushInterval: 1 * time.Hour,
-		L2RedisConfig: nil, // 不自动创建 L2，手动注入 mock
 	}
 
-	cache, err := NewMultiCache(dbStore, config)
+	cache, err := NewMultiCache(dbStore, nil, config)
 	assert.NoError(t, err)
 	defer cache.Close()
 
@@ -568,10 +560,9 @@ func TestMultiCache_syncToL2Error(t *testing.T) {
 		L1MaxSize:     1000,
 		SyncInterval:  1 * time.Hour,
 		FlushInterval: 1 * time.Hour,
-		L2RedisConfig: nil,
 	}
 
-	cache, err := NewMultiCache(dbStore, config)
+	cache, err := NewMultiCache(dbStore, nil, config)
 	assert.NoError(t, err)
 	defer cache.Close()
 
@@ -594,7 +585,7 @@ func TestMultiCache_syncToL2Error(t *testing.T) {
 // TestMultiCache_CloseIdempotent 验证 Close 可重复调用不 panic
 func TestMultiCache_CloseIdempotent(t *testing.T) {
 	dbStore := NewMockDBStore()
-	cache, err := NewMultiCache(dbStore, nil)
+	cache, err := NewMultiCache(dbStore, nil, nil)
 	assert.NoError(t, err)
 
 	assert.NotPanics(t, func() {
@@ -611,10 +602,9 @@ func TestMultiCache_Concurrent(t *testing.T) {
 		L1MaxSize:     10000,
 		SyncInterval:  50 * time.Millisecond,
 		FlushInterval: 50 * time.Millisecond,
-		L2RedisConfig: nil,
 	}
 
-	cache, err := NewMultiCache(dbStore, config)
+	cache, err := NewMultiCache(dbStore, nil, config)
 	assert.NoError(t, err)
 	defer cache.Close()
 
@@ -648,10 +638,9 @@ func TestDistTx_RollbackCacheAside(t *testing.T) {
 		WriteMode:     WriteModeCacheAside,
 		SyncInterval:  1 * time.Hour,
 		FlushInterval: 1 * time.Hour,
-		L2RedisConfig: nil,
 	}
 
-	cache, err := NewMultiCache(dbStore, config)
+	cache, err := NewMultiCache(dbStore, nil, config)
 	assert.NoError(t, err)
 	defer cache.Close()
 

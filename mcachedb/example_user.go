@@ -28,7 +28,7 @@ func NewUser(id, username, email string, age int) *User {
 // Copy 深拷贝
 func (u *User) Copy() Entity {
 	return &User{
-		BaseEntity: *u.BaseEntity.Copy().(*BaseEntity),
+		BaseEntity: *u.BaseEntity.Copy(),
 		Username:   u.Username,
 		Email:      u.Email,
 		Age:        u.Age,
@@ -81,7 +81,7 @@ func (o *Order) Copy() Entity {
 	copy(items, o.Items)
 
 	return &Order{
-		BaseEntity: *o.BaseEntity.Copy().(*BaseEntity),
+		BaseEntity: *o.BaseEntity.Copy(),
 		UserID:     o.UserID,
 		ProductID:  o.ProductID,
 		Amount:     o.Amount,

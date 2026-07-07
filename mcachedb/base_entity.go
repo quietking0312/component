@@ -54,7 +54,7 @@ func (e *BaseEntity) IncrementVersion() {
 }
 
 // Copy 复制（深拷贝）
-func (e *BaseEntity) Copy() Entity {
+func (e *BaseEntity) Copy() *BaseEntity {
 	return &BaseEntity{
 		ID:         e.ID,
 		Ver:        e.Ver,
@@ -64,20 +64,12 @@ func (e *BaseEntity) Copy() Entity {
 	}
 }
 
-// Marshal 默认使用 JSON 序列化。嵌入 BaseEntity 的具体实体会因为 Go 的方法提升
-// 而继承此实现，但 json.Marshal(e) 只会序列化 BaseEntity 本身的字段。
-// 具体实体类型应覆盖此方法以序列化完整结构体，例如：
+// 注意：BaseEntity 不再提供 Marshal/Unmarshal 的默认实现。
+// 具体实体类型必须自己实现这两个方法，否则会因为方法提升而继承到错误的实现，
+// 导致只序列化基础字段、丢失业务字段。例如：
 //
-//	func (u *User) Marshal() ([]byte, error)   { return json.Marshal(u) }
-//	func (u *User) Unmarshal(b []byte) error   { return json.Unmarshal(b, u) }
-func (e *BaseEntity) Marshal() ([]byte, error) {
-	return json.Marshal(e)
-}
-
-// Unmarshal 默认使用 JSON 反序列化
-func (e *BaseEntity) Unmarshal(data []byte) error {
-	return json.Unmarshal(data, e)
-}
+//	func (u *User) Marshal() ([]byte, error) { return json.Marshal(u) }
+//	func (u *User) Unmarshal(b []byte) error { return json.Unmarshal(b, u) }
 
 // EntityWrapper 实体包装器，用于将任意结构体转为 Entity
 type EntityWrapper struct {
@@ -96,7 +88,7 @@ func NewEntityWrapper(key string, data interface{}) *EntityWrapper {
 // Copy 复制
 func (e *EntityWrapper) Copy() Entity {
 	return &EntityWrapper{
-		BaseEntity: *e.BaseEntity.Copy().(*BaseEntity),
+		BaseEntity: *e.BaseEntity.Copy(),
 		Data:       deepCopy(e.Data),
 	}
 }
@@ -161,7 +153,7 @@ func (e *GenericEntity[T]) Copy() Entity {
 	_ = json.Unmarshal(data, &payloadCopy)
 
 	return &GenericEntity[T]{
-		BaseEntity: *e.BaseEntity.Copy().(*BaseEntity),
+		BaseEntity: *e.BaseEntity.Copy(),
 		Payload:    payloadCopy,
 	}
 }
@@ -177,5 +169,4 @@ func (e *GenericEntity[T]) Unmarshal(data []byte) error {
 }
 
 // 确保实现 Entity 接口
-var _ Entity = (*BaseEntity)(nil)
 var _ Entity = (*EntityWrapper)(nil)

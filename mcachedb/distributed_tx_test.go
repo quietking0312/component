@@ -1,6 +1,7 @@
 package mcachedb
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -20,10 +21,18 @@ type UserEntity struct {
 
 func (u *UserEntity) Copy() Entity {
 	return &UserEntity{
-		BaseEntity: u.BaseEntity.Copy().(*BaseEntity),
+		BaseEntity: u.BaseEntity.Copy(),
 		Uid:        u.Uid,
 		Gid:        u.Gid,
 	}
+}
+
+func (u *UserEntity) Marshal() ([]byte, error) {
+	return json.Marshal(u)
+}
+
+func (u *UserEntity) Unmarshal(data []byte) error {
+	return json.Unmarshal(data, u)
 }
 
 type BagData struct {
@@ -43,11 +52,10 @@ func InitUserData() {
 		L1MaxSize:     1000,
 		SyncInterval:  100 * time.Millisecond,
 		FlushInterval: 100 * time.Millisecond,
-		L2RedisConfig: nil,
 	}
-	_userCache, _ = NewMultiCache(NewMockDBStore(), cfg)
-	_bagCache, _ = NewMultiCache(NewMockDBStore(), cfg)
-	_taskCache, _ = NewMultiCache(NewMockDBStore(), cfg)
+	_userCache, _ = NewMultiCache(NewMockDBStore(), nil, cfg)
+	_bagCache, _ = NewMultiCache(NewMockDBStore(), nil, cfg)
+	_taskCache, _ = NewMultiCache(NewMockDBStore(), nil, cfg)
 	uid := 10001
 	if err := _userCache.Set(&UserEntity{
 		BaseEntity: NewBaseEntity(fmt.Sprintf("user:%d", uid)),
