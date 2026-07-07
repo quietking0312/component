@@ -315,6 +315,8 @@ func (mc *MultiCache) Set(entity Entity) error {
 			// 策略2：标记 L2 Down 并降级为 L1+L3（高可用）
 			// mc.markL2Down()
 		}
+		// 已经同步写 L2，不需要 syncToL2Loop 再搬运一次
+		mc.l1.clearL2Dirty(entity.CacheKey())
 	}
 
 	return nil

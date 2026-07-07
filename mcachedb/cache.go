@@ -640,6 +640,26 @@ func (c *Cache) addL2Dirty(key string) {
 	}
 }
 
+// clearL2Dirty 从 L2 待同步队列中移除指定 key
+// 用于 WriteToL2OnSet 等已经同步写 L2 的场景，避免 syncToL2Loop 重复搬运
+func (c *Cache) clearL2Dirty(key string) {
+	c.l2DirtyMu.Lock()
+	defer c.l2DirtyMu.Unlock()
+
+	if !c.l2DirtyMap[key] {
+		return
+	}
+	delete(c.l2DirtyMap, key)
+
+	filtered := make([]string, 0, len(c.l2DirtyKeys))
+	for _, k := range c.l2DirtyKeys {
+		if k != key {
+			filtered = append(filtered, k)
+		}
+	}
+	c.l2DirtyKeys = filtered
+}
+
 // pullL2DirtyKeys 取出并清空 L2 待同步队列
 func (c *Cache) pullL2DirtyKeys() []string {
 	c.l2DirtyMu.Lock()

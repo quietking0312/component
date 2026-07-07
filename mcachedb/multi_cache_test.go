@@ -342,6 +342,10 @@ func TestMultiCache_WriteToL2OnSet(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, got)
 	assert.Equal(t, "alice", got.(*MockEntity).Name)
+
+	// 手动触发 syncToL2，已同步写 L2 的 key 不应被重复搬运
+	cache.syncToL2()
+	assert.Equal(t, 1, l2Store.GetSetOps())
 }
 
 // TestMultiCache_Delete 测试删除
