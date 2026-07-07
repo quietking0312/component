@@ -3,6 +3,7 @@ package mcachedb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -36,15 +37,36 @@ func (m *MockEntity) Copy() Entity {
 // MockRedisStore 模拟 Redis 存储
 type MockRedisStore struct {
 	*RedisStore
-	data   map[string]Entity
-	mu     sync.RWMutex
-	setOps int
+	data      map[string]Entity
+	mu        sync.RWMutex
+	setOps    int
+	pingErr   error
+	pingCalls int
+	msetErr   error
 }
 
 func NewMockRedisStore() *MockRedisStore {
 	return &MockRedisStore{
 		data: make(map[string]Entity),
 	}
+}
+
+func (m *MockRedisStore) SetPingErr(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pingErr = err
+}
+
+func (m *MockRedisStore) GetPingCalls() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.pingCalls
+}
+
+func (m *MockRedisStore) SetMSetErr(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.msetErr = err
 }
 
 func (m *MockRedisStore) Get(ctx context.Context, key string) (Entity, error) {
@@ -82,9 +104,19 @@ func (m *MockRedisStore) MGet(ctx context.Context, keys []string) (map[string]En
 	return result, nil
 }
 
+func (m *MockRedisStore) Ping(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pingCalls++
+	return m.pingErr
+}
+
 func (m *MockRedisStore) MSet(ctx context.Context, entities []Entity) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.msetErr != nil {
+		return m.msetErr
+	}
 	for _, entity := range entities {
 		m.data[entity.CacheKey()] = entity.Copy()
 		m.setOps++
@@ -99,12 +131,17 @@ func (m *MockRedisStore) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+func (m *MockRedisStore) Close() error {
+	return nil
+}
+
 // MockDBStore 模拟数据库存储
 type MockDBStore struct {
 	mu     sync.RWMutex
 	data   map[string]Entity
 	calls  map[string]int
 	callMu sync.Mutex
+	getErr error
 }
 
 func NewMockDBStore() *MockDBStore {
@@ -112,6 +149,12 @@ func NewMockDBStore() *MockDBStore {
 		data:  make(map[string]Entity),
 		calls: make(map[string]int),
 	}
+}
+
+func (m *MockDBStore) SetGetErr(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.getErr = err
 }
 
 func (m *MockDBStore) recordCall(method string) {
@@ -130,6 +173,9 @@ func (m *MockDBStore) Get(ctx context.Context, key string) (Entity, error) {
 	m.recordCall("Get")
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
 	if e, ok := m.data[key]; ok {
 		return e.Copy(), nil
 	}
@@ -475,6 +521,88 @@ func TestMultiCache_PendingDeleteNotBackfilled(t *testing.T) {
 	assert.Nil(t, entity)
 }
 
+// TestMultiCache_L2Recovery 验证 L2 故障后可自动恢复
+func TestMultiCache_L2Recovery(t *testing.T) {
+	dbStore := NewMockDBStore()
+	l2Store := NewMockRedisStore()
+
+	config := &MultiCacheConfig{
+		L1MaxSize:     1000,
+		FlushInterval: 1 * time.Hour,
+		L2RedisConfig: nil, // 不自动创建 L2，手动注入 mock
+	}
+
+	cache, err := NewMultiCache(dbStore, config)
+	assert.NoError(t, err)
+	defer cache.Close()
+
+	cache.l2 = l2Store
+	cache.markL2Down()
+	assert.True(t, cache.isL2Down())
+
+	// 第一次探测失败
+	l2Store.SetPingErr(errors.New("redis down"))
+	assert.False(t, cache.tryRecoverL2())
+	assert.True(t, cache.isL2Down())
+	assert.Equal(t, 1, l2Store.GetPingCalls())
+
+	// 连续两次探测成功后才恢复
+	l2Store.SetPingErr(nil)
+	assert.False(t, cache.tryRecoverL2())
+	assert.True(t, cache.isL2Down())
+
+	assert.True(t, cache.tryRecoverL2())
+	assert.False(t, cache.isL2Down())
+
+	// 恢复后再次探测，状态保持可用
+	assert.False(t, cache.tryRecoverL2())
+	assert.False(t, cache.isL2Down())
+}
+
+// TestMultiCache_syncToL2Error 验证 L2 MSet 失败会标记 l2Down
+func TestMultiCache_syncToL2Error(t *testing.T) {
+	dbStore := NewMockDBStore()
+	l2Store := NewMockRedisStore()
+
+	config := &MultiCacheConfig{
+		L1MaxSize:     1000,
+		SyncInterval:  1 * time.Hour,
+		FlushInterval: 1 * time.Hour,
+		L2RedisConfig: nil,
+	}
+
+	cache, err := NewMultiCache(dbStore, config)
+	assert.NoError(t, err)
+	defer cache.Close()
+
+	cache.l2 = l2Store
+
+	// 写入 L1，触发 L2 dirty
+	entity := NewMockEntity("1", "alice", 100)
+	err = cache.l1.Set(entity)
+	assert.NoError(t, err)
+
+	// 模拟 L2 MSet 失败
+	l2Store.SetMSetErr(errors.New("redis error"))
+	assert.False(t, cache.isL2Down())
+
+	cache.syncToL2()
+
+	assert.True(t, cache.isL2Down())
+}
+
+// TestMultiCache_CloseIdempotent 验证 Close 可重复调用不 panic
+func TestMultiCache_CloseIdempotent(t *testing.T) {
+	dbStore := NewMockDBStore()
+	cache, err := NewMultiCache(dbStore, nil)
+	assert.NoError(t, err)
+
+	assert.NotPanics(t, func() {
+		assert.NoError(t, cache.Close())
+		assert.NoError(t, cache.Close())
+	})
+}
+
 // TestMultiCache_Concurrent 并发测试
 func TestMultiCache_Concurrent(t *testing.T) {
 	dbStore := NewMockDBStore()
@@ -508,4 +636,52 @@ func TestMultiCache_Concurrent(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	assert.GreaterOrEqual(t, len(dbStore.data), 10)
+}
+
+// TestDistTx_RollbackCacheAside 验证 CacheAside 模式下手动 Rollback 不会写数据库
+func TestDistTx_RollbackCacheAside(t *testing.T) {
+	dbStore := NewMockDBStore()
+	dbStore.data["1"] = NewMockEntity("1", "original", 100)
+
+	config := &MultiCacheConfig{
+		L1MaxSize:     1000,
+		WriteMode:     WriteModeCacheAside,
+		SyncInterval:  1 * time.Hour,
+		FlushInterval: 1 * time.Hour,
+		L2RedisConfig: nil,
+	}
+
+	cache, err := NewMultiCache(dbStore, config)
+	assert.NoError(t, err)
+	defer cache.Close()
+
+	tx := NewDistTx()
+
+	// 1. 注册新增操作，然后回滚：DB 不应出现该 key
+	assert.NoError(t, tx.AddSet(cache, NewMockEntity("2", "new", 200)))
+	assert.NoError(t, tx.Rollback())
+	assert.Nil(t, dbStore.data["2"])
+	assert.Equal(t, 0, dbStore.GetCallCount("Insert"))
+
+	// 2. 注册更新操作，然后回滚：DB 保持原值，缓存读到旧值
+	tx2 := NewDistTx()
+	assert.NoError(t, tx2.AddSet(cache, NewMockEntity("1", "updated", 999)))
+	assert.NoError(t, tx2.Rollback())
+	assert.Equal(t, "original", dbStore.data["1"].(*MockEntity).Name)
+	assert.Equal(t, 0, dbStore.GetCallCount("Update"))
+
+	entity, err := cache.Get("1")
+	assert.NoError(t, err)
+	assert.Equal(t, "original", entity.(*MockEntity).Name)
+
+	// 3. 注册删除操作，然后回滚：DB 保持原值
+	tx3 := NewDistTx()
+	assert.NoError(t, tx3.AddDelete(cache, "1"))
+	assert.NoError(t, tx3.Rollback())
+	assert.NotNil(t, dbStore.data["1"])
+	assert.Equal(t, 0, dbStore.GetCallCount("Delete"))
+
+	entity, err = cache.Get("1")
+	assert.NoError(t, err)
+	assert.Equal(t, "original", entity.(*MockEntity).Name)
 }

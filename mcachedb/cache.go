@@ -48,6 +48,9 @@ type Cache struct {
 
 	// 刷新状态
 	flushing int32
+
+	// 关闭控制
+	closeOnce sync.Once
 }
 
 // New 创建缓存
@@ -319,12 +322,16 @@ func (c *Cache) setWriteThrough(entity Entity) error {
 func (c *Cache) setCacheAside(entity Entity) error {
 	key := entity.CacheKey()
 
-	ctx, cancel := context.WithTimeout(context.Background(), defaultDBWriteTimeout)
-	defer cancel()
+	// 判断是插入还是更新，必须先成功读到 DB 才能决定
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDBReadTimeout)
+	existing, err := c.store.Get(ctx, key)
+	cancel()
+	if err != nil {
+		return err
+	}
 
-	// 判断是插入还是更新
-	existing, _ := c.store.Get(ctx, key)
-	var err error
+	ctx, cancel = context.WithTimeout(context.Background(), defaultDBWriteTimeout)
+	defer cancel()
 	if existing == nil {
 		err = c.store.Insert(ctx, entity)
 	} else {
@@ -767,15 +774,17 @@ func (c *Cache) DirtyCount() int {
 
 // Close 关闭缓存
 func (c *Cache) Close() error {
-	close(c.stopCh)
+	c.closeOnce.Do(func() {
+		close(c.stopCh)
 
-	// 等待所有协程完成
-	c.wg.Wait()
+		// 等待所有协程完成
+		c.wg.Wait()
 
-	// 关闭存储
-	if c.store != nil {
-		c.store.Close()
-	}
+		// 关闭存储
+		if c.store != nil {
+			c.store.Close()
+		}
+	})
 
 	return nil
 }

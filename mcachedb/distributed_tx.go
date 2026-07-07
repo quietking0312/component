@@ -1,6 +1,7 @@
 package mcachedb
 
 import (
+	"context"
 	"fmt"
 	"sync"
 )
@@ -176,22 +177,48 @@ func (dt *DistTx) Rollback() error {
 		step := dt.steps[i]
 		ck := dt.cacheKey(step.cache, step.key)
 		old := dt.oldVals[ck]
-
-		switch step.typ {
-		case DistTxSet:
-			if old != nil {
-				_ = step.cache.Set(old)
-			} else {
-				_ = step.cache.Delete(step.key)
-			}
-		case DistTxDelete:
-			if old != nil {
-				_ = step.cache.Set(old)
-			}
-		}
+		dt.rollbackStep(step, old)
 	}
 
 	return nil
+}
+
+// rollbackStep 回滚单个步骤；在 CacheAside 模式下，未提交时不应再写数据库，
+// 只需清理/恢复内存与 L2 缓存即可。
+func (dt *DistTx) rollbackStep(step distTxStep, old Entity) {
+	if step.cache.config.WriteMode == WriteModeCacheAside {
+		switch step.typ {
+		case DistTxSet:
+			if old != nil {
+				step.cache.l1.Load(old)
+			} else {
+				step.cache.l1.Remove(step.key)
+				if step.cache.l2 != nil && !step.cache.isL2Down() {
+					ctx, cancel := context.WithTimeout(context.Background(), l2Timeout)
+					_ = step.cache.l2.Delete(ctx, step.key)
+					cancel()
+				}
+			}
+		case DistTxDelete:
+			if old != nil {
+				step.cache.l1.Load(old)
+			}
+		}
+		return
+	}
+
+	switch step.typ {
+	case DistTxSet:
+		if old != nil {
+			_ = step.cache.Set(old)
+		} else {
+			_ = step.cache.Delete(step.key)
+		}
+	case DistTxDelete:
+		if old != nil {
+			_ = step.cache.Set(old)
+		}
+	}
 }
 
 // rollback 尽最大努力回滚已执行的步骤

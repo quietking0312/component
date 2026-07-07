@@ -2,6 +2,7 @@ package mcachedb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -12,9 +13,10 @@ import (
 
 // MockStore 内存存储实现
 type MockStore struct {
-	mu    sync.RWMutex
-	data  map[string]Entity
-	calls map[string]int
+	mu     sync.RWMutex
+	data   map[string]Entity
+	calls  map[string]int
+	getErr error
 }
 
 func NewMockStore() *MockStore {
@@ -24,10 +26,19 @@ func NewMockStore() *MockStore {
 	}
 }
 
+func (m *MockStore) SetGetErr(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.getErr = err
+}
+
 func (m *MockStore) Get(ctx context.Context, key string) (Entity, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	m.calls["Get"]++
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
 	if e, ok := m.data[key]; ok {
 		return e.Copy(), nil
 	}
@@ -225,6 +236,30 @@ func TestCache_FlushConcurrentSet(t *testing.T) {
 		key := fmt.Sprintf("%d", i)
 		assert.NotNil(t, store.data[key], "key %s should be persisted", key)
 	}
+}
+
+func TestCache_CacheAsideGetError(t *testing.T) {
+	store := NewMockStore()
+	cache, _ := New(store, WithWriteMode(WriteModeCacheAside))
+	defer cache.Close()
+
+	// 模拟 DB Get 失败
+	store.SetGetErr(errors.New("db error"))
+
+	user := NewUser("1", "alice", "alice@test.com", 25)
+	err := cache.Set(user)
+	assert.Error(t, err)
+	assert.Equal(t, 0, store.GetCallCount("Insert"))
+}
+
+func TestCache_CloseIdempotent(t *testing.T) {
+	store := NewMockStore()
+	cache, _ := New(store)
+
+	assert.NotPanics(t, func() {
+		assert.NoError(t, cache.Close())
+		assert.NoError(t, cache.Close())
+	})
 }
 
 func TestCache_CacheAsideWrite(t *testing.T) {

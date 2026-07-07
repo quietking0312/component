@@ -307,6 +307,14 @@ func (s *RedisStore) MDelete(ctx context.Context, keys []string) error {
 	return s.cmdable.Del(ctx, prefixedKeys...).Err()
 }
 
+// Ping 探测 Redis 是否可用
+func (s *RedisStore) Ping(ctx context.Context) error {
+	if s.cmdable == nil {
+		return fmt.Errorf("redis not connected")
+	}
+	return s.cmdable.Ping(ctx).Err()
+}
+
 // Close 关闭连接
 func (s *RedisStore) Close() error {
 	if s.closer != nil {
