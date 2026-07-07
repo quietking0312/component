@@ -21,8 +21,8 @@ type Entity interface {
 	Copy() Entity
 }
 
-// l2Store L2 存储接口（内部使用，便于测试和扩展）
-type l2Store interface {
+// L2Store L2 存储接口（内部使用，便于测试和扩展）
+type L2Store interface {
 	Get(ctx context.Context, key string) (Entity, error)
 	MGet(ctx context.Context, keys []string) (map[string]Entity, error)
 	Set(ctx context.Context, entity Entity) error

@@ -48,7 +48,6 @@ func NewSimpleCache(entityType Entity, cfg *SimpleConfig) (*MultiCache, error) {
 		return nil, fmt.Errorf("config cannot be nil")
 	}
 
-	// 默认值
 	l1Size := cfg.L1Size
 	if l1Size <= 0 {
 		l1Size = defaultMultiCacheL1MaxSize
@@ -64,33 +63,34 @@ func NewSimpleCache(entityType Entity, cfg *SimpleConfig) (*MultiCache, error) {
 		syncInterval = defaultMultiCacheSyncInterval
 	}
 
-	// 创建数据库存储
 	dbStore, err := NewSQLXStoreFromDB(cfg.DB, entityType)
 	if err != nil {
 		return nil, err
 	}
 
-	// 配置多级缓存
 	multiConfig := &MultiCacheConfig{
 		L1MaxSize:      l1Size,
 		SyncInterval:   syncInterval,
 		FlushInterval:  flushInterval,
 		WriteToL2OnSet: false,
-		L2Downgrade:    true,
 	}
 
-	// 配置Redis（如果提供）
+	var l2 L2Store
 	if cfg.RedisAddr != "" {
-		multiConfig.L2RedisConfig = &RedisConfig{
+		redisStore, err := NewRedisStore(&RedisConfig{
 			Addr:       cfg.RedisAddr,
 			Password:   cfg.RedisPass,
 			DB:         cfg.RedisDB,
 			KeyPrefix:  cfg.RedisPrefix,
 			DefaultTTL: defaultRedisTTL,
+		}, entityType)
+		if err != nil {
+			return nil, err
 		}
+		l2 = redisStore
 	}
 
-	return NewMultiCache(dbStore, multiConfig)
+	return NewMultiCache(dbStore, l2, multiConfig)
 }
 
 // MustNewSimpleCache 创建缓存，失败则panic
@@ -188,38 +188,50 @@ func (b *CacheBuilder) MustBuild() *MultiCache {
 
 // NewHighReliabilityCache 创建高可靠性缓存（写L1时同步写L2 Redis）
 func NewHighReliabilityCache(db *sqlx.DB, redisAddr string, entityType Entity) (*MultiCache, error) {
-	cfg := &MultiCacheConfig{
-		L1MaxSize:      defaultMultiCacheL1MaxSize,
-		L2RedisConfig:  &RedisConfig{Addr: redisAddr, DefaultTTL: defaultRedisTTL},
-		WriteToL2OnSet: true, // 关键：写L1时同步写L2
-		SyncInterval:   defaultMultiCacheSyncInterval,
-		FlushInterval:  defaultMultiCacheFlushInterval,
-		L2Downgrade:    true,
-	}
-
 	dbStore, err := NewSQLXStoreFromDB(db, entityType)
 	if err != nil {
 		return nil, err
 	}
 
-	return NewMultiCache(dbStore, cfg)
+	redisStore, err := NewRedisStore(&RedisConfig{
+		Addr:       redisAddr,
+		DefaultTTL: defaultRedisTTL,
+	}, entityType)
+	if err != nil {
+		return nil, err
+	}
+
+	cfg := &MultiCacheConfig{
+		L1MaxSize:      defaultMultiCacheL1MaxSize,
+		WriteToL2OnSet: true,
+		SyncInterval:   defaultMultiCacheSyncInterval,
+		FlushInterval:  defaultMultiCacheFlushInterval,
+	}
+
+	return NewMultiCache(dbStore, redisStore, cfg)
 }
 
 // NewUltraReliabilityCache 创建超高可靠性缓存（写L1同步写L2，且快速刷L3）
 func NewUltraReliabilityCache(db *sqlx.DB, redisAddr string, entityType Entity) (*MultiCache, error) {
-	cfg := &MultiCacheConfig{
-		L1MaxSize:      defaultMultiCacheL1MaxSize,
-		L2RedisConfig:  &RedisConfig{Addr: redisAddr, DefaultTTL: defaultRedisTTL},
-		WriteToL2OnSet: true, // 写L1时同步写L2
-		SyncInterval:   100 * time.Millisecond,
-		FlushInterval:  100 * time.Millisecond, // 100ms刷一次盘
-		L2Downgrade:    true,
-	}
-
 	dbStore, err := NewSQLXStoreFromDB(db, entityType)
 	if err != nil {
 		return nil, err
 	}
 
-	return NewMultiCache(dbStore, cfg)
+	redisStore, err := NewRedisStore(&RedisConfig{
+		Addr:       redisAddr,
+		DefaultTTL: defaultRedisTTL,
+	}, entityType)
+	if err != nil {
+		return nil, err
+	}
+
+	cfg := &MultiCacheConfig{
+		L1MaxSize:      defaultMultiCacheL1MaxSize,
+		WriteToL2OnSet: true,
+		SyncInterval:   100 * time.Millisecond,
+		FlushInterval:  100 * time.Millisecond,
+	}
+
+	return NewMultiCache(dbStore, redisStore, cfg)
 }

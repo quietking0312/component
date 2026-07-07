@@ -26,7 +26,7 @@ const (
 // MultiCache 多级缓存 (L1内存 -> L2Redis -> L3数据库)
 type MultiCache struct {
 	l1                  *Cache  // 一级缓存：本地内存
-	l2                  l2Store // 二级缓存：Redis
+	l2                  L2Store // 二级缓存：Redis
 	l3                  DBStore // 三级存储：数据库
 	config              *MultiCacheConfig
 	stats               MultiCacheStats
@@ -42,13 +42,10 @@ type MultiCache struct {
 type MultiCacheConfig struct {
 	L1MaxSize         int
 	L1CleanupInterval time.Duration
-	L2RedisConfig     *RedisConfig
 	WriteToL2OnSet    bool
 	SyncInterval      time.Duration
 	FlushInterval     time.Duration
-	L2Downgrade       bool
 	WriteMode         WriteMode // L1 写入模式
-	L2EntityType      Entity    // L2 反序列化时使用的实体原型（保持类型）
 }
 
 // DefaultMultiCacheConfig 默认配置
@@ -56,11 +53,9 @@ func DefaultMultiCacheConfig() *MultiCacheConfig {
 	return &MultiCacheConfig{
 		L1MaxSize:         defaultMultiCacheL1MaxSize,
 		L1CleanupInterval: defaultMultiCacheL1CleanupInterval,
-		L2RedisConfig:     DefaultRedisConfig(),
 		WriteToL2OnSet:    false,
 		SyncInterval:      defaultMultiCacheSyncInterval,
 		FlushInterval:     defaultMultiCacheFlushInterval,
-		L2Downgrade:       true,
 	}
 }
 
@@ -82,7 +77,7 @@ func (s *MultiCacheStats) HitRate() float64 {
 }
 
 // NewMultiCache 创建多级缓存
-func NewMultiCache(dbStore DBStore, config *MultiCacheConfig) (*MultiCache, error) {
+func NewMultiCache(dbStore DBStore, l2Store L2Store, config *MultiCacheConfig) (*MultiCache, error) {
 	if dbStore == nil {
 		return nil, fmt.Errorf("dbStore cannot be nil")
 	}
@@ -100,34 +95,16 @@ func NewMultiCache(dbStore DBStore, config *MultiCacheConfig) (*MultiCache, erro
 		config.L1CleanupInterval = defaultMultiCacheL1CleanupInterval
 	}
 
-	// 创建 L2 Redis
-	var l2Store *RedisStore
-	var err error
-	if config.L2RedisConfig != nil {
-		if config.L2EntityType != nil {
-			l2Store, err = NewRedisStore(config.L2RedisConfig, config.L2EntityType)
-		} else {
-			l2Store, err = NewRedisStore(config.L2RedisConfig)
-		}
-		if err != nil {
-			if !config.L2Downgrade {
-				return nil, err
-			}
-			l2Store = nil
-		}
-	}
-
 	mc := &MultiCache{
 		l3:     dbStore,
+		l2:     l2Store,
 		config: config,
 		stopCh: make(chan struct{}),
-	}
-	if l2Store != nil {
-		mc.l2 = l2Store
 	}
 
 	// 创建 L1 内存缓存（固定使用异步模式，写入策略由 MultiCache 层统一控制）
 	l1Store := &multiCacheStore{mc: mc}
+	var err error
 	mc.l1, err = New(l1Store,
 		WithMaxCacheSize(config.L1MaxSize),
 		WithCleanupInterval(config.L1CleanupInterval),
