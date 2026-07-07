@@ -120,6 +120,8 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 | SyncInterval | 500ms | L1->L2同步间隔 |
 | FlushInterval | 1s | L1->L3刷盘间隔 |
 | L2Downgrade | true | L2故障时是否降级 |
+| WriteMode | WriteModeAsync | L1写入模式：异步/同步/直写/缓存旁路 |
+| L2EntityType | nil | L2反序列化实体原型；配置后可保持Redis中的具体类型 |
 
 ## 数据一致性保证
 
@@ -185,6 +187,17 @@ config := &mcachedb.MultiCacheConfig{
 // 重启丢失数据，但最简单
 ```
 
+### 模式4：先写数据库后删缓存（强一致）
+
+```go
+config := &mcachedb.MultiCacheConfig{
+    WriteMode: mcachedb.WriteModeCacheAside,  // 先写数据库，成功后删除缓存
+}
+// 写：先写 L3 数据库，成功后删除 L1/L2 缓存
+// 读：未命中时从 L3 回填 L1/L2
+// 一致性最好，但写入延迟取决于数据库
+```
+
 ## 在项目中集成
 
 ### Service 层改造
@@ -207,6 +220,7 @@ func NewUserService(db *sqlx.DB, redisAddr string) (*UserService, error) {
         L2RedisConfig: &mcachedb.RedisConfig{
             Addr: redisAddr,
         },
+        L2EntityType: &User{},  // 保持 Redis 中的类型，避免 L2 命中后类型丢失
     })
     if err != nil {
         return nil, err
@@ -296,6 +310,7 @@ fmt.Printf("总命中率: %.2f%%\n", stats.HitRate()*100)
 | 纯内存 | ~0.1μs | ~0.1μs | 重启丢失 |
 | 三级缓存 | ~0.1μs(L1) | ~0.1μs(L1) | 最多丢1s |
 | 同步写入 | ~0.1μs(L1) | ~50μs(L2) | 最多丢100ms |
+| 先写库后删缓存 | ~0.1μs(L1)/~5ms(L3) | ~10ms | 数据库成功后即一致 |
 | 纯数据库 | ~5ms | ~10ms | 100%安全 |
 
 ## 注意事项

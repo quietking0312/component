@@ -10,6 +10,20 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+// SQLX 层默认常量
+const (
+	defaultSQLXTableName     = "cachedb_entries"
+	defaultSQLXKeyColumn     = "cache_key"
+	defaultSQLXDataColumn    = "cache_data"
+	defaultSQLXVerColumn     = "version"
+	defaultSQLXDelColumn     = "is_deleted"
+	defaultSQLXTimeColumn    = "updated_at"
+	defaultSQLXMaxOpenConns  = 20
+	defaultSQLXMaxIdleConns  = 5
+	defaultSQLXMaxLifetime   = time.Hour
+	defaultSQLXKeyVarcharLen = 255
+)
+
 // SQLXStoreConfig SQLX存储配置
 type SQLXStoreConfig struct {
 	DSN          string
@@ -27,15 +41,15 @@ type SQLXStoreConfig struct {
 // DefaultSQLXStoreConfig 默认配置
 func DefaultSQLXStoreConfig() *SQLXStoreConfig {
 	return &SQLXStoreConfig{
-		TableName:    "cachedb_entries",
-		KeyColumn:    "cache_key",
-		DataColumn:   "cache_data",
-		VerColumn:    "version",
-		DelColumn:    "is_deleted",
-		TimeColumn:   "updated_at",
-		MaxOpenConns: 20,
-		MaxIdleConns: 5,
-		MaxLifetime:  time.Hour,
+		TableName:    defaultSQLXTableName,
+		KeyColumn:    defaultSQLXKeyColumn,
+		DataColumn:   defaultSQLXDataColumn,
+		VerColumn:    defaultSQLXVerColumn,
+		DelColumn:    defaultSQLXDelColumn,
+		TimeColumn:   defaultSQLXTimeColumn,
+		MaxOpenConns: defaultSQLXMaxOpenConns,
+		MaxIdleConns: defaultSQLXMaxIdleConns,
+		MaxLifetime:  defaultSQLXMaxLifetime,
 	}
 }
 
@@ -78,7 +92,7 @@ func NewSQLXStore(dsn string, entityType Entity, configs ...*SQLXStoreConfig) (*
 
 func (s *SQLXStore) createTable() error {
 	sql := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
-		%s VARCHAR(255) PRIMARY KEY,
+		%s VARCHAR(%d) PRIMARY KEY,
 		%s JSON NOT NULL,
 		%s BIGINT DEFAULT 1,
 		%s TINYINT DEFAULT 0,
@@ -88,6 +102,7 @@ func (s *SQLXStore) createTable() error {
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 		s.config.TableName,
 		s.config.KeyColumn,
+		defaultSQLXKeyVarcharLen,
 		s.config.DataColumn,
 		s.config.VerColumn,
 		s.config.DelColumn,

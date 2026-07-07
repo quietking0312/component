@@ -2,6 +2,7 @@ package mcachedb
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -67,6 +68,35 @@ func (m *MockRedisStore) GetSetOps() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.setOps
+}
+
+func (m *MockRedisStore) MGet(ctx context.Context, keys []string) (map[string]Entity, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make(map[string]Entity)
+	for _, key := range keys {
+		if e, ok := m.data[key]; ok {
+			result[key] = e.Copy()
+		}
+	}
+	return result, nil
+}
+
+func (m *MockRedisStore) MSet(ctx context.Context, entities []Entity) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, entity := range entities {
+		m.data[entity.CacheKey()] = entity.Copy()
+		m.setOps++
+	}
+	return nil
+}
+
+func (m *MockRedisStore) Delete(ctx context.Context, key string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.data, key)
+	return nil
 }
 
 // MockDBStore 模拟数据库存储
@@ -285,6 +315,164 @@ func TestMultiCache_Delete(t *testing.T) {
 
 	_, ok := dbStore.data["1"]
 	assert.False(t, ok)
+}
+
+// TestMultiCache_CacheAsideMode 缓存旁路模式（无 L2，重点验证 L1 失效与 L3 回填）
+func TestMultiCache_CacheAsideMode(t *testing.T) {
+	dbStore := NewMockDBStore()
+
+	config := &MultiCacheConfig{
+		L1MaxSize:     1000,
+		SyncInterval:  1 * time.Hour,
+		FlushInterval: 1 * time.Hour,
+		L2RedisConfig: nil, // 不依赖 Redis，专注验证 L1/L3 行为
+		WriteMode:     WriteModeCacheAside,
+	}
+
+	cache, err := NewMultiCache(dbStore, config)
+	assert.NoError(t, err)
+	defer cache.Close()
+
+	// 写入新数据：应写 L3，并删除 L1
+	newEntity := NewMockEntity("1", "alice", 100)
+	err = cache.Set(newEntity)
+	assert.NoError(t, err)
+
+	// L3 已写入
+	assert.Equal(t, 1, dbStore.GetCallCount("Insert"))
+	assert.Equal(t, "alice", dbStore.data["1"].(*MockEntity).Name)
+
+	// L1 应立即失效
+	l1Entity, err := cache.l1.Get("1")
+	assert.NoError(t, err)
+	assert.Nil(t, l1Entity)
+
+	// 读取：L1 未命中，从 L3 回填
+	entity, err := cache.Get("1")
+	assert.NoError(t, err)
+	assert.NotNil(t, entity)
+	assert.Equal(t, "alice", entity.(*MockEntity).Name)
+
+	// L1 被回填
+	l1Entity, err = cache.l1.Get("1")
+	assert.NoError(t, err)
+	assert.NotNil(t, l1Entity)
+	assert.Equal(t, "alice", l1Entity.(*MockEntity).Name)
+
+	// 更新：应走 Update 而不是 Insert
+	updatedEntity := NewMockEntity("1", "bob", 200)
+	err = cache.Set(updatedEntity)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, dbStore.GetCallCount("Update"))
+	assert.Equal(t, "bob", dbStore.data["1"].(*MockEntity).Name)
+
+	// 删除：数据库和 L1 都应被删除
+	err = cache.Delete("1")
+	assert.NoError(t, err)
+	assert.Equal(t, 1, dbStore.GetCallCount("Delete"))
+	assert.Nil(t, dbStore.data["1"])
+
+	l1Entity, err = cache.l1.Get("1")
+	assert.NoError(t, err)
+	assert.Nil(t, l1Entity)
+}
+
+// TestMultiCache_BackfillNotDirty 验证从 L3 回填 L1 时不会标记 dirty
+func TestMultiCache_BackfillNotDirty(t *testing.T) {
+	dbStore := NewMockDBStore()
+	dbStore.data["1"] = NewMockEntity("1", "alice", 100)
+
+	config := &MultiCacheConfig{
+		L1MaxSize:     1000,
+		SyncInterval:  1 * time.Hour,
+		FlushInterval: 100 * time.Millisecond,
+		L2RedisConfig: nil,
+	}
+
+	cache, err := NewMultiCache(dbStore, config)
+	assert.NoError(t, err)
+	defer cache.Close()
+
+	// 从 L3 读取并回填 L1
+	entity, err := cache.Get("1")
+	assert.NoError(t, err)
+	assert.NotNil(t, entity)
+
+	// 等待 flush，回填数据不应触发 BatchInsert/BatchUpdate
+	time.Sleep(200 * time.Millisecond)
+	assert.Equal(t, 0, dbStore.GetCallCount("BatchInsert"))
+	assert.Equal(t, 0, dbStore.GetCallCount("BatchUpdate"))
+}
+
+// TestRedisStore_TypePreservation 验证 RedisStore 在配置 entityType 后可保持类型
+func TestRedisStore_TypePreservation(t *testing.T) {
+	prototype := NewMockEntity("", "", 0)
+	store := &RedisStore{entityType: prototype}
+
+	entity := NewMockEntity("1", "alice", 100)
+
+	// 序列化
+	data, err := store.marshalEntity(entity)
+	assert.NoError(t, err)
+
+	// 反序列化应保持具体类型
+	got, err := store.unmarshalEntity(data)
+	assert.NoError(t, err)
+	assert.IsType(t, &MockEntity{}, got)
+	assert.Equal(t, "alice", got.(*MockEntity).Name)
+	assert.Equal(t, 100, got.(*MockEntity).Value)
+
+	// 旧格式（EntityWrapper）应能降级解析
+	oldWrapper := &EntityWrapper{
+		BaseEntity: *NewBaseEntity("2"),
+		Data:       NewMockEntity("2", "bob", 200),
+	}
+	oldData, err := json.Marshal(oldWrapper)
+	assert.NoError(t, err)
+
+	got2, err := store.unmarshalEntity(oldData)
+	assert.NoError(t, err)
+	assert.IsType(t, &EntityWrapper{}, got2)
+}
+
+// TestMultiCache_PendingDeleteNotBackfilled 验证已标记删除但未 flush 的 key 不会被回填
+func TestMultiCache_PendingDeleteNotBackfilled(t *testing.T) {
+	dbStore := NewMockDBStore()
+	dbStore.data["1"] = NewMockEntity("1", "alice", 100)
+
+	config := &MultiCacheConfig{
+		L1MaxSize:     1000,
+		SyncInterval:  1 * time.Hour,
+		FlushInterval: 100 * time.Millisecond,
+		L2RedisConfig: nil,
+	}
+
+	cache, err := NewMultiCache(dbStore, config)
+	assert.NoError(t, err)
+	defer cache.Close()
+
+	// 先读取，回填 L1
+	entity, err := cache.Get("1")
+	assert.NoError(t, err)
+	assert.NotNil(t, entity)
+
+	// 删除：L1 标记 deleted，L3 立即删除
+	err = cache.Delete("1")
+	assert.NoError(t, err)
+	assert.Nil(t, dbStore.data["1"])
+
+	// 在 flush 前再次读取，应因 L1 pending delete 而返回 nil，不会从 L3 回填旧数据
+	entity, err = cache.Get("1")
+	assert.NoError(t, err)
+	assert.Nil(t, entity)
+
+	// 等待 flush
+	time.Sleep(200 * time.Millisecond)
+
+	// L1 中的 deleted entry 被清理后，再次读取仍为 nil
+	entity, err = cache.Get("1")
+	assert.NoError(t, err)
+	assert.Nil(t, entity)
 }
 
 // TestMultiCache_Concurrent 并发测试

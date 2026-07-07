@@ -2,6 +2,7 @@ package mcachedb
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -160,5 +161,106 @@ func TestCache_Delete(t *testing.T) {
 	cache.Delete("1")
 
 	entity, _ := cache.Get("1")
+	assert.Nil(t, entity)
+}
+
+func TestCache_Load(t *testing.T) {
+	store := NewMockStore()
+	cache, _ := New(store, WithFlushInterval(100*time.Millisecond))
+	defer cache.Close()
+
+	user := NewUser("1", "alice", "alice@test.com", 25)
+	cache.Load(user)
+
+	// Load 的数据可以命中
+	entity, err := cache.Get("1")
+	assert.NoError(t, err)
+	assert.NotNil(t, entity)
+	assert.Equal(t, "alice", entity.(*User).Username)
+
+	// Load 不标记 dirty，后台 flush 不应写入数据库
+	time.Sleep(200 * time.Millisecond)
+	assert.Equal(t, 0, store.GetCallCount("BatchInsert"))
+	assert.Equal(t, 0, store.GetCallCount("BatchUpdate"))
+}
+
+func TestCache_IsDeleted(t *testing.T) {
+	store := NewMockStore()
+	cache, _ := New(store, WithFlushInterval(1*time.Hour))
+	defer cache.Close()
+
+	user := NewUser("1", "alice", "alice@test.com", 25)
+	cache.Set(user)
+
+	assert.False(t, cache.IsDeleted("1"))
+
+	cache.Delete("1")
+	assert.True(t, cache.IsDeleted("1"))
+	assert.False(t, cache.IsDeleted("2"))
+}
+
+func TestCache_FlushConcurrentSet(t *testing.T) {
+	store := NewMockStore()
+	cache, _ := New(store, WithFlushInterval(50*time.Millisecond), WithBatchSize(1000))
+	defer cache.Close()
+
+	// 持续写入，与后台 flush 并发
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			user := NewUser(fmt.Sprintf("%d", n), "user", fmt.Sprintf("user%d@test.com", n), n)
+			cache.Set(user)
+		}(i)
+	}
+	wg.Wait()
+
+	// 等待 flush 完成
+	time.Sleep(300 * time.Millisecond)
+	cache.Flush()
+
+	// 所有写入都应落盘
+	for i := 0; i < 100; i++ {
+		key := fmt.Sprintf("%d", i)
+		assert.NotNil(t, store.data[key], "key %s should be persisted", key)
+	}
+}
+
+func TestCache_CacheAsideWrite(t *testing.T) {
+	store := NewMockStore()
+	cache, _ := New(store, WithWriteMode(WriteModeCacheAside))
+	defer cache.Close()
+
+	user := NewUser("1", "alice", "alice@test.com", 25)
+
+	// 写入：先写数据库，然后删除本地缓存
+	err := cache.Set(user)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, store.GetCallCount("Insert"))
+
+	// 缓存中应立即失效
+	entity, err := cache.Get("1")
+	assert.NoError(t, err)
+	assert.NotNil(t, entity) // Get 会触发从 DB 回填
+	assert.Equal(t, "alice", entity.(*User).Username)
+
+	// 数据库中存在
+	assert.NotNil(t, store.data["1"])
+
+	// 更新：应走 Update 而不是 Insert
+	user2 := NewUser("1", "bob", "bob@test.com", 30)
+	err = cache.Set(user2)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, store.GetCallCount("Update"))
+
+	// 删除：先删数据库，再删缓存
+	err = cache.Delete("1")
+	assert.NoError(t, err)
+	assert.Equal(t, 1, store.GetCallCount("Delete"))
+	assert.Nil(t, store.data["1"])
+
+	entity, err = cache.Get("1")
+	assert.NoError(t, err)
 	assert.Nil(t, entity)
 }

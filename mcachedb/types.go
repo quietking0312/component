@@ -61,6 +61,8 @@ const (
 	WriteModeSync
 	// WriteModeWriteThrough 直写模式，先写数据库成功后，再更新缓存
 	WriteModeWriteThrough
+	// WriteModeCacheAside 缓存旁路模式，先写数据库成功后，再删除缓存
+	WriteModeCacheAside
 )
 
 // FlushMode 刷新模式
@@ -120,22 +122,37 @@ type Config struct {
 	OnCacheHit     func(key string)
 }
 
+// 默认配置常量
+const (
+	defaultMaxCacheSize      = 100000
+	defaultCleanupInterval   = 5 * time.Minute
+	defaultFlushInterval     = 1 * time.Second
+	defaultBatchSize         = 100
+	defaultDefaultExpiration = 0 // 默认不过期
+	defaultRetryCount        = 3
+	defaultRetryInterval     = 100 * time.Millisecond
+	defaultWriteWorkers      = 1
+	defaultDBMaxOpenConns    = 20
+	defaultDBMaxIdleConns    = 5
+	defaultDBMaxLifetime     = 1 * time.Hour
+)
+
 // DefaultConfig 返回默认配置
 func DefaultConfig() *Config {
 	return &Config{
 		WriteMode:         WriteModeAsync,
 		FlushMode:         FlushModeInterval,
-		FlushInterval:     1 * time.Second,
-		BatchSize:         100,
-		MaxCacheSize:      100000,
-		DefaultExpiration: 0, // 默认不过期
-		CleanupInterval:   5 * time.Minute,
-		RetryCount:        3,
-		RetryInterval:     100 * time.Millisecond,
-		WriteWorkers:      1,
-		DBMaxOpenConns:    20,
-		DBMaxIdleConns:    5,
-		DBMaxLifetime:     1 * time.Hour,
+		FlushInterval:     defaultFlushInterval,
+		BatchSize:         defaultBatchSize,
+		MaxCacheSize:      defaultMaxCacheSize,
+		DefaultExpiration: defaultDefaultExpiration,
+		CleanupInterval:   defaultCleanupInterval,
+		RetryCount:        defaultRetryCount,
+		RetryInterval:     defaultRetryInterval,
+		WriteWorkers:      defaultWriteWorkers,
+		DBMaxOpenConns:    defaultDBMaxOpenConns,
+		DBMaxIdleConns:    defaultDBMaxIdleConns,
+		DBMaxLifetime:     defaultDBMaxLifetime,
 	}
 }
 
@@ -242,6 +259,7 @@ type entry struct {
 	createdAt time.Time
 	expireAt  time.Time
 	dirty     bool
+	dirtySeq  uint64 // 标记 dirty 时的序列号，用于 flush 与 Set 竞态控制
 	deleted   bool
 	isNew     bool // 是否是新记录（用于区分插入和更新）
 }

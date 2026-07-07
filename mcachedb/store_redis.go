@@ -10,6 +10,23 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// Redis 层默认常量
+const (
+	defaultRedisAddr         = "localhost:6379"
+	defaultRedisKeyPrefix    = "mcachedb:"
+	defaultRedisTTL          = 5 * time.Minute
+	defaultRedisPoolSize     = 10
+	defaultRedisMinIdleConns = 2
+	redisConnectTimeout      = 5 * time.Second
+)
+
+// redisTypedWrapper 带格式标记的 Redis 存储包装
+// 用于在配置了 entityType 时，与旧版 EntityWrapper 格式做区分
+type redisTypedWrapper struct {
+	Format string          `json:"_mc_format_"` // 固定为 "typed"
+	Data   json.RawMessage `json:"data"`        // 原始实体 JSON
+}
+
 // RedisStore Redis存储实现（支持单机和集群模式）
 type RedisStore struct {
 	cmdable    redis.Cmdable
@@ -19,6 +36,7 @@ type RedisStore struct {
 
 	keyPrefix  string
 	defaultTTL time.Duration
+	entityType Entity // 可选：反序列化时恢复的具体实体类型
 }
 
 // redisSubscribable 订阅接口（仅单机模式支持）
@@ -42,18 +60,18 @@ type RedisConfig struct {
 // DefaultRedisConfig 默认Redis配置
 func DefaultRedisConfig() *RedisConfig {
 	return &RedisConfig{
-		Addr:         "localhost:6379",
+		Addr:         defaultRedisAddr,
 		Password:     "",
 		DB:           0,
-		KeyPrefix:    "mcachedb:",
-		DefaultTTL:   5 * time.Minute,
-		PoolSize:     10,
-		MinIdleConns: 2,
+		KeyPrefix:    defaultRedisKeyPrefix,
+		DefaultTTL:   defaultRedisTTL,
+		PoolSize:     defaultRedisPoolSize,
+		MinIdleConns: defaultRedisMinIdleConns,
 	}
 }
 
 // NewRedisStore 创建Redis存储（自动识别单机/集群模式）
-func NewRedisStore(config *RedisConfig) (*RedisStore, error) {
+func NewRedisStore(config *RedisConfig, entityType ...Entity) (*RedisStore, error) {
 	if config == nil {
 		config = DefaultRedisConfig()
 	}
@@ -62,11 +80,14 @@ func NewRedisStore(config *RedisConfig) (*RedisStore, error) {
 		keyPrefix:  config.KeyPrefix,
 		defaultTTL: config.DefaultTTL,
 	}
+	if len(entityType) > 0 && entityType[0] != nil {
+		rs.entityType = entityType[0]
+	}
 
 	// 判断是否为集群模式：显式开启或提供了多个地址
 	isCluster := config.ClusterMode || len(config.Addrs) > 1
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), redisConnectTimeout)
 	defer cancel()
 
 	if isCluster {
@@ -86,6 +107,7 @@ func NewRedisStore(config *RedisConfig) (*RedisStore, error) {
 		})
 
 		if err := clusterClient.Ping(ctx).Err(); err != nil {
+			_ = clusterClient.Close()
 			return nil, fmt.Errorf("redis cluster connect failed: %w", err)
 		}
 
@@ -99,7 +121,7 @@ func NewRedisStore(config *RedisConfig) (*RedisStore, error) {
 			addr = config.Addrs[0]
 		}
 		if addr == "" {
-			addr = "localhost:6379"
+			addr = defaultRedisAddr
 		}
 
 		singleClient := redis.NewClient(&redis.Options{
@@ -111,6 +133,7 @@ func NewRedisStore(config *RedisConfig) (*RedisStore, error) {
 		})
 
 		if err := singleClient.Ping(ctx).Err(); err != nil {
+			_ = singleClient.Close()
 			return nil, fmt.Errorf("redis connect failed: %w", err)
 		}
 
@@ -138,12 +161,7 @@ func (s *RedisStore) Get(ctx context.Context, key string) (Entity, error) {
 		return nil, err
 	}
 
-	var wrapper EntityWrapper
-	if err := json.Unmarshal(data, &wrapper); err != nil {
-		return nil, err
-	}
-
-	return &wrapper, nil
+	return s.unmarshalEntity(data)
 }
 
 // MGet 批量获取（集群模式下 go-redis 会自动按 slot 分片执行）
@@ -173,12 +191,12 @@ func (s *RedisStore) MGet(ctx context.Context, keys []string) (map[string]Entity
 			continue
 		}
 
-		var wrapper EntityWrapper
-		if err := json.Unmarshal([]byte(data), &wrapper); err != nil {
+		entity, err := s.unmarshalEntity([]byte(data))
+		if err != nil {
 			continue
 		}
 
-		entities[keys[i]] = &wrapper
+		entities[keys[i]] = entity
 	}
 
 	return entities, nil
@@ -186,14 +204,7 @@ func (s *RedisStore) MGet(ctx context.Context, keys []string) (map[string]Entity
 
 // Set 设置到Redis
 func (s *RedisStore) Set(ctx context.Context, entity Entity) error {
-	wrapper := &EntityWrapper{
-		BaseEntity: *NewBaseEntity(entity.CacheKey()),
-		Data:       entity,
-	}
-	wrapper.Ver = entity.Version()
-	wrapper.DelFlag = entity.IsDeleted()
-
-	data, err := json.Marshal(wrapper)
+	data, err := s.marshalEntity(entity)
 	if err != nil {
 		return err
 	}
@@ -216,14 +227,7 @@ func (s *RedisStore) MSet(ctx context.Context, entities []Entity) error {
 	pipe := s.pipeliner()
 
 	for _, entity := range entities {
-		wrapper := &EntityWrapper{
-			BaseEntity: *NewBaseEntity(entity.CacheKey()),
-			Data:       entity,
-		}
-		wrapper.Ver = entity.Version()
-		wrapper.DelFlag = entity.IsDeleted()
-
-		data, err := json.Marshal(wrapper)
+		data, err := s.marshalEntity(entity)
 		if err != nil {
 			return err
 		}
@@ -234,6 +238,54 @@ func (s *RedisStore) MSet(ctx context.Context, entities []Entity) error {
 
 	_, err := pipe.Exec(ctx)
 	return err
+}
+
+// unmarshalEntity 根据是否配置了 entityType 选择反序列化方式
+func (s *RedisStore) unmarshalEntity(data []byte) (Entity, error) {
+	// 若配置了 entityType，先尝试解析带格式标记的 typed wrapper
+	if s.entityType != nil {
+		var typed redisTypedWrapper
+		if err := json.Unmarshal(data, &typed); err == nil && typed.Format == "typed" {
+			entity := s.entityType.Copy()
+			if err := json.Unmarshal(typed.Data, entity); err == nil {
+				return entity, nil
+			}
+		}
+		// 解析失败可能是旧格式（EntityWrapper），继续降级解析
+	}
+
+	var wrapper EntityWrapper
+	if err := json.Unmarshal(data, &wrapper); err != nil {
+		return nil, err
+	}
+
+	return &wrapper, nil
+}
+
+// marshalEntity 根据是否配置了 entityType 选择序列化方式
+func (s *RedisStore) marshalEntity(entity Entity) ([]byte, error) {
+	if s.entityType != nil {
+		// 配置了具体类型：用 typed wrapper 存储原始实体 JSON，保持类型信息
+		rawData, err := json.Marshal(entity)
+		if err != nil {
+			return nil, err
+		}
+		wrapper := redisTypedWrapper{
+			Format: "typed",
+			Data:   rawData,
+		}
+		return json.Marshal(wrapper)
+	}
+
+	// 未配置类型：使用 EntityWrapper 保持兼容
+	wrapper := &EntityWrapper{
+		BaseEntity: *NewBaseEntity(entity.CacheKey()),
+		Data:       entity,
+	}
+	wrapper.Ver = entity.Version()
+	wrapper.DelFlag = entity.IsDeleted()
+
+	return json.Marshal(wrapper)
 }
 
 // Delete 从Redis删除

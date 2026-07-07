@@ -7,6 +7,11 @@ import (
 	"time"
 )
 
+// 事务层默认常量
+const (
+	defaultTxTimeout = 30 * time.Second
+)
+
 // Tx 事务
 type Tx struct {
 	cache      *Cache
@@ -32,7 +37,7 @@ func (c *Cache) Begin() (*Tx, error) {
 		return nil, fmt.Errorf("no store configured")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTxTimeout)
 
 	return &Tx{
 		cache:   c,
@@ -126,20 +131,21 @@ func (tx *Tx) Commit() error {
 	defer tx.cancel()
 
 	// 执行所有操作
-	for _, op := range tx.opStack {
+	executed := make([]int, 0, len(tx.opStack))
+	for i, op := range tx.opStack {
 		switch op.typ {
 		case "set":
 			if err := tx.cache.Set(op.entity); err != nil {
-				// 回滚已执行的操作
-				tx.rollbackOps(tx.opStack[:len(tx.opStack)-1])
+				tx.rollbackOps(tx.opStack[:len(executed)])
 				return fmt.Errorf("commit failed: %w", err)
 			}
 		case "delete":
 			if err := tx.cache.Delete(op.key); err != nil {
-				tx.rollbackOps(tx.opStack[:len(tx.opStack)-1])
+				tx.rollbackOps(tx.opStack[:len(executed)])
 				return fmt.Errorf("commit failed: %w", err)
 			}
 		}
+		executed = append(executed, i)
 	}
 
 	// 如果是同步模式，确保数据写入数据库

@@ -170,6 +170,27 @@ func (dt *DistTx) Rollback() error {
 		return fmt.Errorf("distTx already finished")
 	}
 	dt.rolledBack = true
+
+	// 逆序恢复预读的旧值
+	for i := len(dt.steps) - 1; i >= 0; i-- {
+		step := dt.steps[i]
+		ck := dt.cacheKey(step.cache, step.key)
+		old := dt.oldVals[ck]
+
+		switch step.typ {
+		case DistTxSet:
+			if old != nil {
+				_ = step.cache.Set(old)
+			} else {
+				_ = step.cache.Delete(step.key)
+			}
+		case DistTxDelete:
+			if old != nil {
+				_ = step.cache.Set(old)
+			}
+		}
+	}
+
 	return nil
 }
 

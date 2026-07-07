@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+// cache 层内部常量（不适合走配置文件）
+const (
+	defaultDBReadTimeout  = 5 * time.Second
+	defaultDBWriteTimeout = 5 * time.Second
+	defaultFlushTimeout   = 30 * time.Second
+)
+
 // Cache 带数据库持久化的缓存
 type Cache struct {
 	config *Config
@@ -33,7 +40,11 @@ type Cache struct {
 	wg      sync.WaitGroup
 
 	// 统计
-	stats Stats
+	stats   Stats
+	statsMu sync.Mutex // 保护 stats 中非 atomic 字段（FlushTotalTime、LastFlushTime）
+
+	// 脏数据序列号，用于解决 flush 与并发 Set 的竞态
+	dirtySeqCounter uint64
 
 	// 刷新状态
 	flushing int32
@@ -100,7 +111,7 @@ func (c *Cache) Get(key string) (Entity, error) {
 	}
 
 	// 查数据库
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDBReadTimeout)
 	defer cancel()
 
 	entity, err := c.store.Get(ctx, key)
@@ -152,7 +163,7 @@ func (c *Cache) MGet(keys []string) (map[string]Entity, error) {
 	atomic.AddInt64(&c.stats.CacheMisses, int64(len(missKeys)))
 
 	// 查数据库
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDBReadTimeout)
 	defer cancel()
 
 	entities, err := c.store.MGet(ctx, missKeys)
@@ -196,6 +207,8 @@ func (c *Cache) Set(entity Entity) error {
 		return c.setSync(entity)
 	case WriteModeWriteThrough:
 		return c.setWriteThrough(entity)
+	case WriteModeCacheAside:
+		return c.setCacheAside(entity)
 	default: // WriteModeAsync
 		return c.setAsync(entity)
 	}
@@ -210,20 +223,21 @@ func (c *Cache) setAsync(entity Entity) error {
 
 	c.mu.Lock()
 	// 检查缓存大小限制
-	if len(c.data) >= c.config.MaxCacheSize {
-		if _, ok := c.data[key]; !ok {
-			c.mu.Unlock()
-			return fmt.Errorf("cache is full")
-		}
+	_, exists := c.data[key]
+	if len(c.data) >= c.config.MaxCacheSize && !exists {
+		c.mu.Unlock()
+		return fmt.Errorf("cache is full")
 	}
 
+	seq := atomic.AddUint64(&c.dirtySeqCounter, 1)
 	c.data[key] = &entry{
 		entity:    entity.Copy(),
 		createdAt: time.Now(),
 		expireAt:  c.getExpireTime(),
 		dirty:     true,
 		deleted:   false,
-		isNew:     true,
+		isNew:     !exists,
+		dirtySeq:  seq,
 	}
 	c.mu.Unlock()
 
@@ -244,7 +258,7 @@ func (c *Cache) setSync(entity Entity) error {
 	key := entity.CacheKey()
 
 	// 先写数据库
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDBWriteTimeout)
 	defer cancel()
 
 	// 判断是插入还是更新
@@ -281,7 +295,7 @@ func (c *Cache) setSync(entity Entity) error {
 
 // setWriteThrough 直写模式
 func (c *Cache) setWriteThrough(entity Entity) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDBWriteTimeout)
 	defer cancel()
 
 	// 先写数据库
@@ -301,6 +315,36 @@ func (c *Cache) setWriteThrough(entity Entity) error {
 	return c.setAsync(entity)
 }
 
+// setCacheAside 缓存旁路模式：先写数据库，成功后删除缓存
+func (c *Cache) setCacheAside(entity Entity) error {
+	key := entity.CacheKey()
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDBWriteTimeout)
+	defer cancel()
+
+	// 判断是插入还是更新
+	existing, _ := c.store.Get(ctx, key)
+	var err error
+	if existing == nil {
+		err = c.store.Insert(ctx, entity)
+	} else {
+		err = c.store.Update(ctx, entity)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	atomic.AddInt64(&c.stats.DBWrites, 1)
+
+	// 删除本地缓存
+	c.mu.Lock()
+	delete(c.data, key)
+	c.mu.Unlock()
+
+	return nil
+}
+
 // Delete 删除
 func (c *Cache) Delete(key string) error {
 	switch c.config.WriteMode {
@@ -308,6 +352,8 @@ func (c *Cache) Delete(key string) error {
 		return c.deleteSync(key)
 	case WriteModeWriteThrough:
 		return c.deleteWriteThrough(key)
+	case WriteModeCacheAside:
+		return c.deleteCacheAside(key)
 	default:
 		return c.deleteAsync(key)
 	}
@@ -320,6 +366,7 @@ func (c *Cache) deleteAsync(key string) error {
 		e.deleted = true
 		e.dirty = true
 		e.entity.SetDeleted(true)
+		e.dirtySeq = atomic.AddUint64(&c.dirtySeqCounter, 1)
 	}
 	c.mu.Unlock()
 
@@ -353,12 +400,32 @@ func (c *Cache) deleteSync(key string) error {
 
 // deleteWriteThrough 直写删除
 func (c *Cache) deleteWriteThrough(key string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDBWriteTimeout)
 	defer cancel()
 
 	if err := c.store.Delete(ctx, key); err != nil {
 		return err
 	}
+
+	atomic.AddInt64(&c.stats.DBWrites, 1)
+
+	c.mu.Lock()
+	delete(c.data, key)
+	c.mu.Unlock()
+
+	return nil
+}
+
+// deleteCacheAside 缓存旁路删除：先删数据库，成功后删除缓存
+func (c *Cache) deleteCacheAside(key string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDBWriteTimeout)
+	defer cancel()
+
+	if err := c.store.Delete(ctx, key); err != nil {
+		return err
+	}
+
+	atomic.AddInt64(&c.stats.DBWrites, 1)
 
 	c.mu.Lock()
 	delete(c.data, key)
@@ -412,6 +479,7 @@ func (c *Cache) doFlush() error {
 		return nil
 	}
 
+	snapshotSeq := c.dirtySeqCounter
 	dirtyKeys := make([]string, len(c.dirtyKeys))
 	copy(dirtyKeys, c.dirtyKeys)
 	c.dirtyKeys = c.dirtyKeys[:0]
@@ -445,7 +513,7 @@ func (c *Cache) doFlush() error {
 	}
 
 	startTime := time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultFlushTimeout)
 	defer cancel()
 
 	// 执行写入
@@ -499,9 +567,10 @@ func (c *Cache) doFlush() error {
 	duration := time.Since(startTime)
 
 	// 清除 dirty 标记和 isNew 标记
+	// 只清除在本次 flush 快照之前标记的 dirty，避免清除 flush 期间新产生的 dirty
 	c.mu.Lock()
 	for _, key := range dirtyKeys {
-		if e, ok := c.data[key]; ok {
+		if e, ok := c.data[key]; ok && e.dirtySeq <= snapshotSeq {
 			e.dirty = false
 			e.isNew = false // 写入成功后不再是新记录
 			if e.deleted {
@@ -514,8 +583,10 @@ func (c *Cache) doFlush() error {
 	// 更新统计
 	atomic.AddInt64(&c.stats.FlushCount, 1)
 	atomic.AddInt64(&c.stats.DBWrites, int64(len(dirtyKeys)))
+	c.statsMu.Lock()
 	c.stats.LastFlushTime = time.Now()
 	c.stats.FlushTotalTime += duration
+	c.statsMu.Unlock()
 
 	if c.config.OnFlushSuccess != nil {
 		c.config.OnFlushSuccess(len(dirtyKeys), duration)
@@ -646,6 +717,11 @@ func (c *Cache) Stats() Stats {
 	dirtyCount := len(c.dirtyKeys)
 	c.dirtyMu.Unlock()
 
+	c.statsMu.Lock()
+	flushTotalTime := c.stats.FlushTotalTime
+	lastFlushTime := c.stats.LastFlushTime
+	c.statsMu.Unlock()
+
 	stats := Stats{
 		CacheHits:      atomic.LoadInt64(&c.stats.CacheHits),
 		CacheMisses:    atomic.LoadInt64(&c.stats.CacheMisses),
@@ -655,8 +731,8 @@ func (c *Cache) Stats() Stats {
 		DBWrites:       atomic.LoadInt64(&c.stats.DBWrites),
 		DBWriteErrors:  atomic.LoadInt64(&c.stats.DBWriteErrors),
 		FlushCount:     atomic.LoadInt64(&c.stats.FlushCount),
-		FlushTotalTime: c.stats.FlushTotalTime,
-		LastFlushTime:  c.stats.LastFlushTime,
+		FlushTotalTime: flushTotalTime,
+		LastFlushTime:  lastFlushTime,
 		IsFlushing:     atomic.LoadInt32(&c.flushing) == 1,
 	}
 
@@ -702,6 +778,52 @@ func (c *Cache) Close() error {
 	}
 
 	return nil
+}
+
+// Remove 直接从内存中移除指定 key，不触发持久化，也不标记脏数据
+func (c *Cache) Remove(key string) {
+	c.mu.Lock()
+	delete(c.data, key)
+	c.mu.Unlock()
+}
+
+// Load 将实体加载到 L1 内存，不标记 dirty，不触发后台刷盘
+// 适用于从 L2/L3 回填等只读场景
+// 若 L1 中已存在脏数据或已标记删除的 entry，则不会覆盖，避免丢失未 flush 的修改
+func (c *Cache) Load(entity Entity) {
+	key := entity.CacheKey()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if e, ok := c.data[key]; ok && (e.dirty || e.deleted) {
+		return
+	}
+
+	c.data[key] = &entry{
+		entity:    entity.Copy(),
+		createdAt: time.Now(),
+		expireAt:  c.getExpireTime(),
+		dirty:     false,
+		deleted:   false,
+		isNew:     false,
+	}
+}
+
+// IsDeleted 返回 key 在 L1 中是否存在且已被标记删除
+func (c *Cache) IsDeleted(key string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	e, ok := c.data[key]
+	return ok && e.deleted
+}
+
+// IsDirty 返回 key 在 L1 中是否存在且未 flush 的脏数据
+func (c *Cache) IsDirty(key string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	e, ok := c.data[key]
+	return ok && e.dirty
 }
 
 // Clear 清空缓存

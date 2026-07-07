@@ -8,6 +8,19 @@ import (
 	"time"
 )
 
+// multiCache 默认与内部常量（不适合走配置文件）
+const (
+	defaultMultiCacheL1MaxSize         = 100000
+	defaultMultiCacheL1CleanupInterval = 5 * time.Minute
+	defaultMultiCacheSyncInterval      = 500 * time.Millisecond
+	defaultMultiCacheFlushInterval     = 1 * time.Second
+
+	l2Timeout         = 1 * time.Second
+	l3Timeout         = 5 * time.Second
+	syncToL2Timeout   = 10 * time.Second
+	syncToL2BatchSize = 100
+)
+
 // MultiCache 多级缓存 (L1内存 -> L2Redis -> L3数据库)
 type MultiCache struct {
 	l1     *Cache      // 一级缓存：本地内存
@@ -30,17 +43,19 @@ type MultiCacheConfig struct {
 	SyncInterval      time.Duration
 	FlushInterval     time.Duration
 	L2Downgrade       bool
+	WriteMode         WriteMode // L1 写入模式
+	L2EntityType      Entity    // L2 反序列化时使用的实体原型（保持类型）
 }
 
 // DefaultMultiCacheConfig 默认配置
 func DefaultMultiCacheConfig() *MultiCacheConfig {
 	return &MultiCacheConfig{
-		L1MaxSize:         100000,
-		L1CleanupInterval: 5 * time.Minute,
+		L1MaxSize:         defaultMultiCacheL1MaxSize,
+		L1CleanupInterval: defaultMultiCacheL1CleanupInterval,
 		L2RedisConfig:     DefaultRedisConfig(),
 		WriteToL2OnSet:    false,
-		SyncInterval:      500 * time.Millisecond,
-		FlushInterval:     1 * time.Second,
+		SyncInterval:      defaultMultiCacheSyncInterval,
+		FlushInterval:     defaultMultiCacheFlushInterval,
 		L2Downgrade:       true,
 	}
 }
@@ -76,7 +91,11 @@ func NewMultiCache(dbStore DBStore, config *MultiCacheConfig) (*MultiCache, erro
 	var l2Store *RedisStore
 	var err error
 	if config.L2RedisConfig != nil {
-		l2Store, err = NewRedisStore(config.L2RedisConfig)
+		if config.L2EntityType != nil {
+			l2Store, err = NewRedisStore(config.L2RedisConfig, config.L2EntityType)
+		} else {
+			l2Store, err = NewRedisStore(config.L2RedisConfig)
+		}
 		if err != nil {
 			if !config.L2Downgrade {
 				return nil, err
@@ -92,7 +111,7 @@ func NewMultiCache(dbStore DBStore, config *MultiCacheConfig) (*MultiCache, erro
 		stopCh: make(chan struct{}),
 	}
 
-	// 创建 L1 内存缓存
+	// 创建 L1 内存缓存（固定使用异步模式，写入策略由 MultiCache 层统一控制）
 	l1Store := &multiCacheStore{mc: mc}
 	mc.l1, err = New(l1Store,
 		WithMaxCacheSize(config.L1MaxSize),
@@ -136,6 +155,10 @@ func (mc *MultiCache) MGet(keys []string) (map[string]Entity, error) {
 	missKeys := make([]string, 0, len(keys))
 	for _, k := range keys {
 		if _, ok := result[k]; !ok {
+			// L1 中已标记删除但尚未 flush，不查询 L2/L3
+			if mc.l1.IsDeleted(k) {
+				continue
+			}
 			missKeys = append(missKeys, k)
 		}
 	}
@@ -145,7 +168,7 @@ func (mc *MultiCache) MGet(keys []string) (map[string]Entity, error) {
 
 	// 2. 查 L2 (Redis)
 	if mc.l2 != nil && !mc.isL2Down() {
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), l2Timeout)
 		l2Result, err := mc.l2.MGet(ctx, missKeys)
 		cancel()
 
@@ -155,8 +178,8 @@ func (mc *MultiCache) MGet(keys []string) (map[string]Entity, error) {
 			for k, v := range l2Result {
 				result[k] = v
 				atomic.AddInt64(&mc.stats.L2Hits, 1)
-				// 回填 L1
-				mc.l1.Set(v)
+				// 回填 L1（不标记 dirty，避免 flush 时重复写 L3）
+				mc.l1.Load(v)
 			}
 		}
 	}
@@ -173,7 +196,7 @@ func (mc *MultiCache) MGet(keys []string) (map[string]Entity, error) {
 	}
 
 	// 3. 查 L3 (数据库)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), l3Timeout)
 	l3Result, err := mc.l3.MGet(ctx, stillMiss)
 	cancel()
 
@@ -199,14 +222,14 @@ func (mc *MultiCache) MGet(keys []string) (map[string]Entity, error) {
 	// 回填 L1 和 L2
 	for k, v := range l3Result {
 		result[k] = v
-		mc.l1.Set(v)
+		mc.l1.Load(v)
 	}
 	if mc.l2 != nil && !mc.isL2Down() && len(l3Result) > 0 {
 		entities := make([]Entity, 0, len(l3Result))
 		for _, v := range l3Result {
 			entities = append(entities, v)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), l2Timeout)
 		mc.l2.MSet(ctx, entities)
 		cancel()
 	}
@@ -226,9 +249,14 @@ func (mc *MultiCache) Get(key string) (Entity, error) {
 		return entity, nil
 	}
 
+	// L1 中已标记删除但尚未 flush，避免查询 L2/L3 并回填旧数据
+	if mc.l1.IsDeleted(key) {
+		return nil, nil
+	}
+
 	// 2. 查 L2 (Redis)
 	if mc.l2 != nil && !mc.isL2Down() {
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), l2Timeout)
 		entity, err = mc.l2.Get(ctx, key)
 		cancel()
 
@@ -236,14 +264,14 @@ func (mc *MultiCache) Get(key string) (Entity, error) {
 			mc.markL2Down()
 		} else if entity != nil {
 			atomic.AddInt64(&mc.stats.L2Hits, 1)
-			// 回填 L1
-			mc.l1.Set(entity)
+			// 回填 L1（不标记 dirty）
+			mc.l1.Load(entity)
 			return entity, nil
 		}
 	}
 
 	// 3. 查 L3 (数据库)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), l3Timeout)
 	entity, err = mc.l3.Get(ctx, key)
 	cancel()
 
@@ -258,9 +286,9 @@ func (mc *MultiCache) Get(key string) (Entity, error) {
 	atomic.AddInt64(&mc.stats.L3Hits, 1)
 
 	// 回填 L1 和 L2
-	mc.l1.Set(entity)
+	mc.l1.Load(entity)
 	if mc.l2 != nil && !mc.isL2Down() {
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), l2Timeout)
 		mc.l2.Set(ctx, entity)
 		cancel()
 	}
@@ -270,6 +298,10 @@ func (mc *MultiCache) Get(key string) (Entity, error) {
 
 // Set 设置
 func (mc *MultiCache) Set(entity Entity) error {
+	if mc.config.WriteMode == WriteModeCacheAside {
+		return mc.setCacheAside(entity)
+	}
+
 	// 写入 L1
 	if err := mc.l1.Set(entity); err != nil {
 		return err
@@ -277,7 +309,7 @@ func (mc *MultiCache) Set(entity Entity) error {
 
 	// 可选：同步写入 L2
 	if mc.config.WriteToL2OnSet && mc.l2 != nil && !mc.isL2Down() {
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), l2Timeout)
 		defer cancel()
 		if err := mc.l2.Set(ctx, entity); err != nil {
 			// 策略1：回滚 L1 并返回错误（强一致）
@@ -292,19 +324,79 @@ func (mc *MultiCache) Set(entity Entity) error {
 	return nil
 }
 
+// setCacheAside 缓存旁路模式：先写数据库，成功后删除 L1/L2 缓存
+func (mc *MultiCache) setCacheAside(entity Entity) error {
+	key := entity.CacheKey()
+
+	ctx, cancel := context.WithTimeout(context.Background(), l3Timeout)
+	existing, _ := mc.l3.Get(ctx, key)
+	var err error
+	if existing == nil {
+		err = mc.l3.Insert(ctx, entity)
+	} else {
+		err = mc.l3.Update(ctx, entity)
+	}
+	cancel()
+
+	if err != nil {
+		return err
+	}
+
+	// 删除 L1 内存缓存（不标记脏数据，避免后续 flush 重复写 DB）
+	mc.l1.Remove(key)
+
+	// 删除 L2 Redis 缓存
+	if mc.l2 != nil && !mc.isL2Down() {
+		ctx2, cancel2 := context.WithTimeout(context.Background(), l2Timeout)
+		if err := mc.l2.Delete(ctx2, key); err != nil {
+			mc.markL2Down()
+		}
+		cancel2()
+	}
+
+	return nil
+}
+
 // Delete 删除
 func (mc *MultiCache) Delete(key string) error {
-	mc.l1.Delete(key)
+	if mc.config.WriteMode == WriteModeCacheAside {
+		return mc.deleteCacheAside(key)
+	}
+
+	if err := mc.l1.Delete(key); err != nil {
+		return err
+	}
 
 	if mc.l2 != nil && !mc.isL2Down() {
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), l2Timeout)
 		mc.l2.Delete(ctx, key)
 		cancel()
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), l3Timeout)
 	defer cancel()
 	return mc.l3.Delete(ctx, key)
+}
+
+// deleteCacheAside 缓存旁路删除：先删数据库，再删 L1/L2
+func (mc *MultiCache) deleteCacheAside(key string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), l3Timeout)
+	if err := mc.l3.Delete(ctx, key); err != nil {
+		cancel()
+		return err
+	}
+	cancel()
+
+	// 直接清理 L1 内存，不标记脏数据
+	mc.l1.Remove(key)
+
+	if mc.l2 != nil && !mc.isL2Down() {
+		ctx2, cancel2 := context.WithTimeout(context.Background(), l2Timeout)
+		mc.l2.Delete(ctx2, key)
+		cancel2()
+	}
+
+	return nil
 }
 
 // Flush 立即刷盘到数据库
@@ -379,19 +471,25 @@ func (mc *MultiCache) syncToL2() {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), syncToL2Timeout)
 	defer cancel()
 
-	// 批量获取并写入 L2（已删除的 key 也会被正常覆盖/同步）
-	batch := make([]Entity, 0, 100)
+	// 批量获取并写入 L2（已删除的 key 同步删除 L2）
+	batch := make([]Entity, 0, syncToL2BatchSize)
+	deleteKeys := make([]string, 0)
 	for _, key := range keys {
+		if mc.l1.IsDeleted(key) {
+			deleteKeys = append(deleteKeys, key)
+			continue
+		}
+
 		entity, err := mc.l1.Get(key)
 		if err != nil || entity == nil {
 			continue
 		}
 		batch = append(batch, entity)
 
-		if len(batch) >= 100 {
+		if len(batch) >= syncToL2BatchSize {
 			mc.l2.MSet(ctx, batch)
 			batch = batch[:0]
 		}
@@ -399,6 +497,12 @@ func (mc *MultiCache) syncToL2() {
 
 	if len(batch) > 0 {
 		mc.l2.MSet(ctx, batch)
+	}
+
+	for _, key := range deleteKeys {
+		ctx2, cancel2 := context.WithTimeout(context.Background(), l2Timeout)
+		_ = mc.l2.Delete(ctx2, key)
+		cancel2()
 	}
 }
 
