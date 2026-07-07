@@ -2,7 +2,6 @@ package mcachedb
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"time"
@@ -20,13 +19,6 @@ const (
 	redisConnectTimeout      = 5 * time.Second
 )
 
-// redisTypedWrapper 带格式标记的 Redis 存储包装
-// 用于在配置了 entityType 时，与旧版 EntityWrapper 格式做区分
-type redisTypedWrapper struct {
-	Format string          `json:"_mc_format_"` // 固定为 "typed"
-	Data   json.RawMessage `json:"data"`        // 原始实体 JSON
-}
-
 // RedisStore Redis存储实现（支持单机和集群模式）
 type RedisStore struct {
 	cmdable    redis.Cmdable
@@ -36,7 +28,8 @@ type RedisStore struct {
 
 	keyPrefix  string
 	defaultTTL time.Duration
-	entityType Entity // 可选：反序列化时恢复的具体实体类型
+	// entityType 用作反序列化时的原型：调用 Copy() 得到空实例，再调用 Unmarshal()
+	entityType Entity
 }
 
 // redisSubscribable 订阅接口（仅单机模式支持）
@@ -204,7 +197,7 @@ func (s *RedisStore) MGet(ctx context.Context, keys []string) (map[string]Entity
 
 // Set 设置到Redis
 func (s *RedisStore) Set(ctx context.Context, entity Entity) error {
-	data, err := s.marshalEntity(entity)
+	data, err := entity.Marshal()
 	if err != nil {
 		return err
 	}
@@ -227,7 +220,7 @@ func (s *RedisStore) MSet(ctx context.Context, entities []Entity) error {
 	pipe := s.pipeliner()
 
 	for _, entity := range entities {
-		data, err := s.marshalEntity(entity)
+		data, err := entity.Marshal()
 		if err != nil {
 			return err
 		}
@@ -240,52 +233,16 @@ func (s *RedisStore) MSet(ctx context.Context, entities []Entity) error {
 	return err
 }
 
-// unmarshalEntity 根据是否配置了 entityType 选择反序列化方式
+// unmarshalEntity 使用 entityType 原型的 Unmarshal 方法反序列化
 func (s *RedisStore) unmarshalEntity(data []byte) (Entity, error) {
-	// 若配置了 entityType，先尝试解析带格式标记的 typed wrapper
-	if s.entityType != nil {
-		var typed redisTypedWrapper
-		if err := json.Unmarshal(data, &typed); err == nil && typed.Format == "typed" {
-			entity := s.entityType.Copy()
-			if err := json.Unmarshal(typed.Data, entity); err == nil {
-				return entity, nil
-			}
-		}
-		// 解析失败可能是旧格式（EntityWrapper），继续降级解析
+	if s.entityType == nil {
+		return nil, fmt.Errorf("entityType not set: cannot unmarshal")
 	}
-
-	var wrapper EntityWrapper
-	if err := json.Unmarshal(data, &wrapper); err != nil {
+	entity := s.entityType.Copy()
+	if err := entity.Unmarshal(data); err != nil {
 		return nil, err
 	}
-
-	return &wrapper, nil
-}
-
-// marshalEntity 根据是否配置了 entityType 选择序列化方式
-func (s *RedisStore) marshalEntity(entity Entity) ([]byte, error) {
-	if s.entityType != nil {
-		// 配置了具体类型：用 typed wrapper 存储原始实体 JSON，保持类型信息
-		rawData, err := json.Marshal(entity)
-		if err != nil {
-			return nil, err
-		}
-		wrapper := redisTypedWrapper{
-			Format: "typed",
-			Data:   rawData,
-		}
-		return json.Marshal(wrapper)
-	}
-
-	// 未配置类型：使用 EntityWrapper 保持兼容
-	wrapper := &EntityWrapper{
-		BaseEntity: *NewBaseEntity(entity.CacheKey()),
-		Data:       entity,
-	}
-	wrapper.Ver = entity.Version()
-	wrapper.DelFlag = entity.IsDeleted()
-
-	return json.Marshal(wrapper)
+	return entity, nil
 }
 
 // Delete 从Redis删除

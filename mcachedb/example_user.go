@@ -1,6 +1,7 @@
 package mcachedb
 
 import (
+	"encoding/json"
 	"fmt"
 )
 
@@ -33,6 +34,16 @@ func (u *User) Copy() Entity {
 		Age:        u.Age,
 		Tags:       append([]string{}, u.Tags...),
 	}
+}
+
+// Marshal JSON 序列化完整 User 结构体
+func (u *User) Marshal() ([]byte, error) {
+	return json.Marshal(u)
+}
+
+// Unmarshal JSON 反序列化到 User
+func (u *User) Unmarshal(data []byte) error {
+	return json.Unmarshal(data, u)
 }
 
 // Order 订单实体示例
@@ -77,6 +88,16 @@ func (o *Order) Copy() Entity {
 		Status:     o.Status,
 		Items:      items,
 	}
+}
+
+// Marshal JSON 序列化完整 Order 结构体
+func (o *Order) Marshal() ([]byte, error) {
+	return json.Marshal(o)
+}
+
+// Unmarshal JSON 反序列化到 Order
+func (o *Order) Unmarshal(data []byte) error {
+	return json.Unmarshal(data, o)
 }
 
 // CacheWithUser 带有用户实体类型的缓存

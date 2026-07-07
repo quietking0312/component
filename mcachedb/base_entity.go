@@ -64,6 +64,21 @@ func (e *BaseEntity) Copy() Entity {
 	}
 }
 
+// Marshal 默认使用 JSON 序列化。嵌入 BaseEntity 的具体实体会因为 Go 的方法提升
+// 而继承此实现，但 json.Marshal(e) 只会序列化 BaseEntity 本身的字段。
+// 具体实体类型应覆盖此方法以序列化完整结构体，例如：
+//
+//	func (u *User) Marshal() ([]byte, error)   { return json.Marshal(u) }
+//	func (u *User) Unmarshal(b []byte) error   { return json.Unmarshal(b, u) }
+func (e *BaseEntity) Marshal() ([]byte, error) {
+	return json.Marshal(e)
+}
+
+// Unmarshal 默认使用 JSON 反序列化
+func (e *BaseEntity) Unmarshal(data []byte) error {
+	return json.Unmarshal(data, e)
+}
+
 // EntityWrapper 实体包装器，用于将任意结构体转为 Entity
 type EntityWrapper struct {
 	BaseEntity
@@ -86,6 +101,16 @@ func (e *EntityWrapper) Copy() Entity {
 	}
 }
 
+// Marshal JSON 序列化整个 wrapper
+func (e *EntityWrapper) Marshal() ([]byte, error) {
+	return json.Marshal(e)
+}
+
+// Unmarshal JSON 反序列化整个 wrapper
+func (e *EntityWrapper) Unmarshal(data []byte) error {
+	return json.Unmarshal(data, e)
+}
+
 // deepCopy 深拷贝
 func deepCopy(src interface{}) interface{} {
 	if src == nil {
@@ -97,7 +122,6 @@ func deepCopy(src interface{}) interface{} {
 		return src
 	}
 
-	// 创建相同类型的新实例
 	dst := reflect.New(reflect.TypeOf(src)).Interface()
 	if err := json.Unmarshal(data, dst); err != nil {
 		return src
@@ -132,7 +156,6 @@ func NewGenericEntity[T any](key string, payload T) *GenericEntity[T] {
 
 // Copy 复制泛型实体
 func (e *GenericEntity[T]) Copy() Entity {
-	// 序列化再反序列化实现深拷贝
 	var payloadCopy T
 	data, _ := json.Marshal(e.Payload)
 	_ = json.Unmarshal(data, &payloadCopy)
@@ -141,6 +164,16 @@ func (e *GenericEntity[T]) Copy() Entity {
 		BaseEntity: *e.BaseEntity.Copy().(*BaseEntity),
 		Payload:    payloadCopy,
 	}
+}
+
+// Marshal JSON 序列化完整泛型实体
+func (e *GenericEntity[T]) Marshal() ([]byte, error) {
+	return json.Marshal(e)
+}
+
+// Unmarshal JSON 反序列化完整泛型实体
+func (e *GenericEntity[T]) Unmarshal(data []byte) error {
+	return json.Unmarshal(data, e)
 }
 
 // 确保实现 Entity 接口

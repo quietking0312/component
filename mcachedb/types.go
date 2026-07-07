@@ -19,6 +19,11 @@ type Entity interface {
 	IncrementVersion()
 	// Copy 复制实体（深拷贝）
 	Copy() Entity
+
+	// Marshal 将实体序列化为字节流，由用户决定具体格式（JSON、Protobuf 等）
+	Marshal() ([]byte, error)
+	// Unmarshal 从字节流反序列化到当前实体，格式需与 Marshal 保持一致
+	Unmarshal([]byte) error
 }
 
 // L2Store L2 存储接口（内部使用，便于测试和扩展）
