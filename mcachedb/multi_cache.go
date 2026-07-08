@@ -61,19 +61,37 @@ func DefaultMultiCacheConfig() *MultiCacheConfig {
 
 // MultiCacheStats 统计
 type MultiCacheStats struct {
+	// 命中计数
 	L1Hits int64
 	L2Hits int64
 	L3Hits int64
 	Misses int64
+
+	// 当前内存状态
+	L1Size       int   // L1 中当前存活的条目数（含未 flush 的脏数据）
+	L1DirtyCount int64 // 待 flush 到 L3 的脏条目数
+	L2DirtyCount int64 // 待同步到 L2 的条目数（自上次 syncToL2 以来新增的变更）
+
+	// L2 状态
+	L2Down bool // L2 当前是否处于降级状态
 }
 
-// HitRate 命中率
+// HitRate 总命中率
 func (s *MultiCacheStats) HitRate() float64 {
 	total := s.L1Hits + s.L2Hits + s.L3Hits + s.Misses
 	if total == 0 {
 		return 0
 	}
 	return float64(s.L1Hits+s.L2Hits+s.L3Hits) / float64(total)
+}
+
+// L1HitRate L1 命中率
+func (s *MultiCacheStats) L1HitRate() float64 {
+	total := s.L1Hits + s.L2Hits + s.L3Hits + s.Misses
+	if total == 0 {
+		return 0
+	}
+	return float64(s.L1Hits) / float64(total)
 }
 
 // NewMultiCache 创建多级缓存
@@ -412,12 +430,27 @@ func (mc *MultiCache) Flush() error {
 
 // Stats 获取统计
 func (mc *MultiCache) Stats() MultiCacheStats {
+	l1Stats := mc.l1.Stats()
 	return MultiCacheStats{
-		L1Hits: atomic.LoadInt64(&mc.stats.L1Hits),
-		L2Hits: atomic.LoadInt64(&mc.stats.L2Hits),
-		L3Hits: atomic.LoadInt64(&mc.stats.L3Hits),
-		Misses: atomic.LoadInt64(&mc.stats.Misses),
+		L1Hits:       atomic.LoadInt64(&mc.stats.L1Hits),
+		L2Hits:       atomic.LoadInt64(&mc.stats.L2Hits),
+		L3Hits:       atomic.LoadInt64(&mc.stats.L3Hits),
+		Misses:       atomic.LoadInt64(&mc.stats.Misses),
+		L1Size:       l1Stats.CacheSize,
+		L1DirtyCount: l1Stats.DirtyCount,
+		L2DirtyCount: int64(mc.l1.L2DirtyCount()),
+		L2Down:       mc.isL2Down(),
 	}
+}
+
+// SyncToL2 立即将 L1 中待同步的变更推送到 L2，不等待后台定时器
+func (mc *MultiCache) SyncToL2() {
+	mc.syncToL2()
+}
+
+// FlushToL3 立即将 L1 中所有脏数据刷盘到 L3，不等待后台定时器
+func (mc *MultiCache) FlushToL3() error {
+	return mc.l1.Flush()
 }
 
 // Close 关闭

@@ -125,15 +125,17 @@ func (c *Cache) Get(key string) (Entity, error) {
 		return nil, nil
 	}
 
-	// 回填缓存
+	// 回填缓存：只有当 L1 不存在该 key，或 L1 版本更旧时才写入
 	c.mu.Lock()
-	c.data[key] = &entry{
-		entity:    entity.Copy(),
-		createdAt: time.Now(),
-		expireAt:  c.getExpireTime(),
-		dirty:     false,
-		deleted:   false,
-		isNew:     false, // 从数据库回填的不是新记录
+	if exist, ok := c.data[key]; !ok || (!exist.dirty && !exist.deleted && exist.entity.Version() < entity.Version()) {
+		c.data[key] = &entry{
+			entity:    entity.Copy(),
+			createdAt: time.Now(),
+			expireAt:  c.getExpireTime(),
+			dirty:     false,
+			deleted:   false,
+			isNew:     false,
+		}
 	}
 	c.mu.Unlock()
 
@@ -174,17 +176,19 @@ func (c *Cache) MGet(keys []string) (map[string]Entity, error) {
 		return result, err
 	}
 
-	// 回填缓存
+	// 回填缓存：版本比较，避免旧数据覆盖 L1 中更新的 clean entry
 	c.mu.Lock()
 	for key, entity := range entities {
 		result[key] = entity
-		c.data[key] = &entry{
-			entity:    entity.Copy(),
-			createdAt: time.Now(),
-			expireAt:  c.getExpireTime(),
-			dirty:     false,
-			deleted:   false,
-			isNew:     false,
+		if exist, ok := c.data[key]; !ok || (!exist.dirty && !exist.deleted && exist.entity.Version() < entity.Version()) {
+			c.data[key] = &entry{
+				entity:    entity.Copy(),
+				createdAt: time.Now(),
+				expireAt:  c.getExpireTime(),
+				dirty:     false,
+				deleted:   false,
+				isNew:     false,
+			}
 		}
 	}
 	c.mu.Unlock()
@@ -792,6 +796,13 @@ func (c *Cache) DirtyCount() int {
 	return len(c.dirtyKeys)
 }
 
+// L2DirtyCount 获取待同步到 L2 的条目数
+func (c *Cache) L2DirtyCount() int {
+	c.l2DirtyMu.Lock()
+	defer c.l2DirtyMu.Unlock()
+	return len(c.l2DirtyKeys)
+}
+
 // Close 关闭缓存
 func (c *Cache) Close() error {
 	c.closeOnce.Do(func() {
@@ -818,15 +829,22 @@ func (c *Cache) Remove(key string) {
 
 // Load 将实体加载到 L1 内存，不标记 dirty，不触发后台刷盘
 // 适用于从 L2/L3 回填等只读场景
-// 若 L1 中已存在脏数据或已标记删除的 entry，则不会覆盖，避免丢失未 flush 的修改
+// 跳过条件：L1 中已有脏数据/删除标记，或 L1 版本号 >= 传入版本（避免旧数据覆盖新数据）
 func (c *Cache) Load(entity Entity) {
 	key := entity.CacheKey()
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if e, ok := c.data[key]; ok && (e.dirty || e.deleted) {
-		return
+	if e, ok := c.data[key]; ok {
+		// 脏数据或删除标记：有未 flush 的写操作，绝对不能覆盖
+		if e.dirty || e.deleted {
+			return
+		}
+		// clean entry 但版本不比传入新：跳过，避免旧版本覆盖新版本
+		if e.entity.Version() >= entity.Version() {
+			return
+		}
 	}
 
 	c.data[key] = &entry{

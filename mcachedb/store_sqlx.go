@@ -215,17 +215,30 @@ func (s *SQLXStore) Update(ctx context.Context, entity Entity) error {
 		return err
 	}
 
+	// WHERE version < ? 乐观锁：只有数据库里的版本比当前版本旧才允许覆盖，
+	// 防止并发场景下低版本写操作静默覆盖已落盘的高版本数据。
 	query := fmt.Sprintf(
-		"UPDATE %s SET %s = ?, %s = ?, %s = 0 WHERE %s = ?",
+		"UPDATE %s SET %s = ?, %s = ?, %s = 0 WHERE %s = ? AND %s < ?",
 		s.config.TableName,
 		s.config.DataColumn,
 		s.config.VerColumn,
 		s.config.DelColumn,
 		s.config.KeyColumn,
+		s.config.VerColumn,
 	)
 
-	_, err = s.db.ExecContext(ctx, query, data, entity.Version(), entity.CacheKey())
-	return err
+	result, err := s.db.ExecContext(ctx, query, data, entity.Version(), entity.CacheKey(), entity.Version())
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return fmt.Errorf("optimistic lock conflict: key=%s version=%d", entity.CacheKey(), entity.Version())
+	}
+	return nil
 }
 
 func (s *SQLXStore) Delete(ctx context.Context, key string) error {
@@ -290,13 +303,15 @@ func (s *SQLXStore) BatchUpdate(ctx context.Context, entities []Entity) error {
 	}
 	defer tx.Rollback()
 
+	// WHERE version < ? 乐观锁，与 Update 保持一致
 	query := fmt.Sprintf(
-		"UPDATE %s SET %s = ?, %s = ?, %s = 0 WHERE %s = ?",
+		"UPDATE %s SET %s = ?, %s = ?, %s = 0 WHERE %s = ? AND %s < ?",
 		s.config.TableName,
 		s.config.DataColumn,
 		s.config.VerColumn,
 		s.config.DelColumn,
 		s.config.KeyColumn,
+		s.config.VerColumn,
 	)
 
 	stmt, err := tx.Preparex(query)
@@ -310,8 +325,16 @@ func (s *SQLXStore) BatchUpdate(ctx context.Context, entities []Entity) error {
 		if err != nil {
 			return err
 		}
-		if _, err := stmt.ExecContext(ctx, data, entity.Version(), entity.CacheKey()); err != nil {
+		result, err := stmt.ExecContext(ctx, data, entity.Version(), entity.CacheKey(), entity.Version())
+		if err != nil {
 			return err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			return fmt.Errorf("optimistic lock conflict: key=%s version=%d", entity.CacheKey(), entity.Version())
 		}
 	}
 
