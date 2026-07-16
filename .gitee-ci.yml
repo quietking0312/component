@@ -45,7 +45,7 @@ stages:
               memail mencoding merr mexcel mhttp middleware
               mjwt mlog mmath mmen mpubsub mrand mredis
               mrpc msnowflake msock msql mssh mstorage
-              mstore mtime mtimewheel mtool mutils mlb
+              mstore mtime mtimewheel mtool mutils mlb mlcok
             )
 
             git config user.name "gitee-ci"
