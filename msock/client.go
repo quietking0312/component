@@ -149,27 +149,11 @@ func (c *Client) connectEntry(e *poolEntry, addr string) error {
 
 // watchAndReconnect 监视连接断开并以指数退避自动重连。
 // conn 为 nil 时直接进入重连循环（首次连接失败的情况）。
-func (c *Client) watchAndReconnect(e *poolEntry, conn Conn, addr string) {
+// 整个生命周期在一个 goroutine 内完成，避免递归启动。
+func (c *Client) watchAndReconnect(e *poolEntry, initialConn Conn, addr string) {
 	defer c.wg.Done()
 
-	if conn != nil {
-		bc := extractBaseConn(conn)
-		if bc != nil {
-			select {
-			case <-bc.waitClose():
-			case <-c.closeCh:
-				return
-			}
-		}
-		// 仅当该槽位仍持有本连接时才清空，避免与 Connect 重入竞争
-		e.mu.Lock()
-		if e.conn != conn {
-			e.mu.Unlock()
-			return
-		}
-		e.conn = nil
-		e.mu.Unlock()
-	}
+	current := initialConn
 
 	delay := c.config.ReconnectInitDelay
 	if delay <= 0 {
@@ -184,6 +168,28 @@ func (c *Client) watchAndReconnect(e *poolEntry, conn Conn, addr string) {
 	}
 
 	for attempt := 1; ; attempt++ {
+		// 等待当前连接断开
+		if current != nil {
+			bc := extractBaseConn(current)
+			if bc != nil {
+				select {
+				case <-bc.waitClose():
+				case <-c.closeCh:
+					return
+				}
+			}
+			// 仅当槽位仍持有本连接时才清空，避免与 Connect 重入竞争
+			e.mu.Lock()
+			if e.conn != current {
+				// 槽位已被 Connect 重入或其他路径更新，退出本 watcher
+				e.mu.Unlock()
+				return
+			}
+			e.conn = nil
+			e.mu.Unlock()
+			current = nil
+		}
+
 		if c.IsClosed() {
 			return
 		}
@@ -192,7 +198,7 @@ func (c *Client) watchAndReconnect(e *poolEntry, conn Conn, addr string) {
 			return
 		}
 
-		// 若槽位已有新连接（Connect 重入或其他 watcher 已恢复），本 watcher 退出
+		// 若槽位已有新连接（Connect 重入），本 watcher 退出
 		e.mu.Lock()
 		if e.conn != nil {
 			e.mu.Unlock()
@@ -220,7 +226,7 @@ func (c *Client) watchAndReconnect(e *poolEntry, conn Conn, addr string) {
 			continue
 		}
 
-		// 在 dial 期间客户端可能已被关闭或已被其他 watcher 恢复，用 e.mu 保护原子赋值
+		// dial 期间客户端可能已被关闭或槽位已被其他路径恢复
 		e.mu.Lock()
 		if c.IsClosed() {
 			e.mu.Unlock()
@@ -241,9 +247,13 @@ func (c *Client) watchAndReconnect(e *poolEntry, conn Conn, addr string) {
 		c.metrics.totalReconnects.Add(1)
 		c.logger.Info(fmt.Sprintf("pool[%d] reconnected", e.index))
 
-		c.wg.Add(1)
-		go c.watchAndReconnect(e, newConn, addr)
-		return
+		// 重置退避计时，以新连接继续循环监视
+		delay = c.config.ReconnectInitDelay
+		if delay <= 0 {
+			delay = time.Second
+		}
+		attempt = 0
+		current = newConn
 	}
 }
 

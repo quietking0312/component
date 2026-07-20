@@ -387,14 +387,13 @@ func (m *ConnManager) Add(conn Conn) bool {
 	}
 	s := m.shard(conn.ID())
 	s.mu.Lock()
-	// double-check：多个 goroutine 同时通过上面的 Load 检查时，这里再做一次精确判断
 	if m.maxConn > 0 && int(m.total.Load()) >= m.maxConn {
 		s.mu.Unlock()
 		return false
 	}
 	s.conns[conn.ID()] = conn
-	s.mu.Unlock()
 	m.total.Add(1)
+	s.mu.Unlock()
 	return true
 }
 
@@ -440,11 +439,11 @@ func (m *ConnManager) Count() int {
 	return int(m.total.Load())
 }
 
-// BroadcastBytes 广播原始字节到所有连接
-func (m *ConnManager) BroadcastBytes(data []byte) {
+// BroadcastBytes 广播原始字节到所有连接，返回成功入队的连接数
+func (m *ConnManager) BroadcastBytes(data []byte) int {
 	conns := m.GetAll()
 	if len(conns) == 0 {
-		return
+		return 0
 	}
 
 	batchSize := 256
@@ -454,7 +453,10 @@ func (m *ConnManager) BroadcastBytes(data []byte) {
 		batchSize = (len(conns) + workerCount - 1) / workerCount
 	}
 
-	var wg sync.WaitGroup
+	var (
+		wg      sync.WaitGroup
+		succeed atomic.Int64
+	)
 	for i := 0; i < workerCount; i++ {
 		start := i * batchSize
 		if start >= len(conns) {
@@ -470,12 +472,15 @@ func (m *ConnManager) BroadcastBytes(data []byte) {
 			defer wg.Done()
 			for _, conn := range b {
 				if !conn.IsClosed() {
-					_ = conn.SendBytes(data)
+					if conn.SendBytes(data) == nil {
+						succeed.Add(1)
+					}
 				}
 			}
 		}(batch)
 	}
 	wg.Wait()
+	return int(succeed.Load())
 }
 
 // CloseAll 关闭所有连接

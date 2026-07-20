@@ -107,7 +107,9 @@ func (c *Client) startHeartbeat() {
 		return
 	}
 
+	c.wg.Add(1)
 	go func() {
+		defer c.wg.Done()
 		ticker := time.NewTicker(c.config.HeartbeatInterval)
 		defer ticker.Stop()
 

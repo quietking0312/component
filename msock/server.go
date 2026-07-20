@@ -271,8 +271,8 @@ func (s *Server) Broadcast(msg Message) {
 		s.logger.Error(fmt.Sprintf("broadcast encode error: %v", err))
 		return
 	}
-	s.connManager.BroadcastBytes(data)
-	s.metrics.totalSendBytes.Add(int64(len(data)) * int64(s.connManager.Count()))
+	sent := s.connManager.BroadcastBytes(data)
+	s.metrics.totalSendBytes.Add(int64(len(data)) * int64(sent))
 }
 
 // ConnCount 返回当前连接数
