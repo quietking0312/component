@@ -1,12 +1,9 @@
 package msock
 
 import (
-	"context"
 	"fmt"
-	"sync"
-	"time"
-
 	"golang.org/x/time/rate"
+	"sync"
 )
 
 // Router 消息路由器
@@ -242,36 +239,6 @@ func RateLimit(r float64, burst int, logger Logger) Middleware {
 			}
 
 			next(conn, msg)
-		}
-	}
-}
-
-// Timeout 超时中间件。超过 d 时取消 handler 的 context 并触发 timeoutFn 回调，
-// 然后等待 handler goroutine 自然退出，不会留下游离 goroutine。
-// handler 应通过 conn.Context() 感知取消信号，及时返回。
-func Timeout(d time.Duration, timeoutFn func(), logger Logger) Middleware {
-	return func(next Handler) Handler {
-		return func(conn Conn, msg Message) {
-			ctx, cancel := context.WithTimeout(conn.Context(), d)
-			defer cancel()
-
-			done := make(chan struct{})
-			go func() {
-				defer close(done)
-				next(conn, msg)
-			}()
-
-			select {
-			case <-done:
-			case <-ctx.Done():
-				if logger != nil {
-					logger.Warn(fmt.Sprintf("handler timeout, conn: %s", conn.ID()))
-				}
-				if timeoutFn != nil {
-					timeoutFn()
-				}
-				<-done // 等待 handler goroutine 退出，避免游离
-			}
 		}
 	}
 }

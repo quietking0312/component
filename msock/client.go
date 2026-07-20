@@ -405,6 +405,9 @@ func (c *Client) OnError(fn func(error)) {
 
 // handleMessage 处理消息
 func (c *Client) handleMessage(conn Conn, msg Message) {
+	if bc := extractBaseConn(conn); bc != nil {
+		bc.TouchHeartbeat()
+	}
 	c.metrics.totalMessages.Add(1)
 	c.metrics.totalRecvBytes.Add(int64(len(msg.Data())))
 	if c.router == nil {
