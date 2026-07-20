@@ -4,6 +4,8 @@ import (
 	"context"
 	"net"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // ConnType 连接类型
@@ -145,6 +147,8 @@ type ServerConfig struct {
 	ReconnectMaxDelay time.Duration
 	// ReconnectMaxAttempts 最大重连次数，0 表示无限重试
 	ReconnectMaxAttempts int
+	// IDGenerator 连接 ID 生成函数，默认使用 UUID
+	IDGenerator func() string
 }
 
 // DefaultServerConfig 返回默认服务器配置
@@ -169,6 +173,7 @@ func DefaultServerConfig() *ServerConfig {
 		ReconnectInitDelay:   time.Second,
 		ReconnectMaxDelay:    30 * time.Second,
 		ReconnectMaxAttempts: 0,
+		IDGenerator:          func() string { return uuid.New().String() },
 	}
 }
 
@@ -301,5 +306,14 @@ func WithReconnectDelay(initDelay, maxDelay time.Duration) ServerOption {
 func WithReconnectMaxAttempts(n int) ServerOption {
 	return func(c *ServerConfig) {
 		c.ReconnectMaxAttempts = n
+	}
+}
+
+// WithIDGenerator 设置连接 ID 生成函数
+func WithIDGenerator(fn func() string) ServerOption {
+	return func(c *ServerConfig) {
+		if fn != nil {
+			c.IDGenerator = fn
+		}
 	}
 }

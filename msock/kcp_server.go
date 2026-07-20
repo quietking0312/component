@@ -69,7 +69,7 @@ type kcpConn struct {
 // newKCPConn 创建KCP连接
 func newKCPConn(conn net.Conn, server *Server) *kcpConn {
 	c := &kcpConn{
-		baseConn: newBaseConn(ConnTypeKCP),
+		baseConn: newBaseConn(ConnTypeKCP, server.config.IDGenerator()),
 		Conn:     conn,
 		server:   server,
 		codec:    server.codec,

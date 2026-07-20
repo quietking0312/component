@@ -21,7 +21,7 @@ func (h *gwsEventHandler) OnOpen(socket *gws.Conn) {
 		}
 	}()
 
-	conn := newGWSConn(socket, h.server, h.server.codec)
+	conn := newGWSConn(socket, h.server, h.server.codec, h.server.config.IDGenerator())
 	if !h.server.connManager.Add(conn) {
 		h.server.logger.Warn(fmt.Sprintf("max connections reached, reject gws connection from %s", socket.RemoteAddr()))
 		_ = socket.NetConn().Close()

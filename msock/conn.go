@@ -8,8 +8,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // bodyPool 复用 body 读取缓冲，减少 GC 压力
@@ -46,11 +44,11 @@ type baseConn struct {
 	sendWg sync.WaitGroup
 }
 
-// newBaseConn 创建基础连接
-func newBaseConn(connType ConnType) *baseConn {
+// newBaseConn 创建基础连接，id 由外部传入
+func newBaseConn(connType ConnType, id string) *baseConn {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &baseConn{
-		id:            uuid.New().String(),
+		id:            id,
 		connType:      connType,
 		ctx:           ctx,
 		cancel:        cancel,
@@ -151,7 +149,7 @@ type tcpConn struct {
 // newTCPConn 创建TCP连接
 func newTCPConn(conn net.Conn, server *Server) *tcpConn {
 	c := &tcpConn{
-		baseConn: newBaseConn(ConnTypeTCP),
+		baseConn: newBaseConn(ConnTypeTCP, server.config.IDGenerator()),
 		Conn:     conn,
 		server:   server,
 		codec:    server.codec,

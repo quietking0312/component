@@ -427,7 +427,7 @@ func (c *Client) dialTCP(addr string) (Conn, error) {
 
 	conn := &tcpClientConn{
 		tcpConn: &tcpConn{
-			baseConn:     newBaseConn(ConnTypeTCP),
+			baseConn:     newBaseConn(ConnTypeTCP, c.config.IDGenerator()),
 			Conn:         netConn,
 			server:       nil,
 			codec:        c.codec,
@@ -458,7 +458,7 @@ func (c *Client) dialWebSocket(addr string) (Conn, error) {
 
 	conn := &wsClientConn{
 		wsConn: &wsConn{
-			baseConn: newBaseConn(ConnTypeWebSocket),
+			baseConn: newBaseConn(ConnTypeWebSocket, c.config.IDGenerator()),
 			conn:     ws,
 			server:   nil,
 			codec:    c.codec,
@@ -486,7 +486,7 @@ func (c *Client) dialGWS(addr string) (Conn, error) {
 	}
 
 	conn := &gwsClientConn{
-		gwsConn: newGWSConn(socket, nil, c.codec),
+		gwsConn: newGWSConn(socket, nil, c.codec, c.config.IDGenerator()),
 		client:  c,
 	}
 	socket.Session().Store("msock_conn", conn)
@@ -539,7 +539,7 @@ func (c *Client) dialKCP(addr string) (Conn, error) {
 
 	clientConn := &kcpClientConn{
 		kcpConn: &kcpConn{
-			baseConn:     newBaseConn(ConnTypeKCP),
+			baseConn:     newBaseConn(ConnTypeKCP, c.config.IDGenerator()),
 			Conn:         rawConn,
 			server:       nil,
 			codec:        c.codec,

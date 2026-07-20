@@ -17,9 +17,9 @@ type gwsConn struct {
 }
 
 // newGWSConn 创建gws连接
-func newGWSConn(conn *gws.Conn, server *Server, codec Codec) *gwsConn {
+func newGWSConn(conn *gws.Conn, server *Server, codec Codec, id string) *gwsConn {
 	return &gwsConn{
-		baseConn: newBaseConn(ConnTypeGWS),
+		baseConn: newBaseConn(ConnTypeGWS, id),
 		conn:     conn,
 		server:   server,
 		codec:    codec,

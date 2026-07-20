@@ -45,7 +45,7 @@ type wsConn struct {
 // newWSConn 创建WebSocket连接
 func newWSConn(conn *websocket.Conn, server *Server) *wsConn {
 	c := &wsConn{
-		baseConn: newBaseConn(ConnTypeWebSocket),
+		baseConn: newBaseConn(ConnTypeWebSocket, server.config.IDGenerator()),
 		conn:     conn,
 		server:   server,
 		codec:    server.codec,
