@@ -288,6 +288,7 @@ func (s *Server) handleWSConn(wsConnObj *websocket.Conn) {
 	}
 	defer s.connManager.Remove(conn.ID())
 
+	s.metrics.totalConns.Add(1)
 	s.logger.Info(fmt.Sprintf("websocket connection established: %s from %s", conn.ID(), conn.RemoteAddr()))
 
 	// 触发连接建立回调

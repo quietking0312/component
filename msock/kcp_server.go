@@ -61,8 +61,9 @@ func DefaultKCPConfig() *KCPConfig {
 type kcpConn struct {
 	*baseConn
 	net.Conn
-	server *Server
-	codec  Codec
+	server       *Server
+	codec        Codec
+	writeTimeout time.Duration
 }
 
 // newKCPConn 创建KCP连接
@@ -107,9 +108,13 @@ func (c *kcpConn) Send(msg Message) error {
 func (c *kcpConn) sendLoop() {
 	defer c.sendWg.Done()
 	for data := range c.sendCh {
-		writeTimeout := 10 * time.Second
-		if c.server != nil && c.server.config.WriteTimeout > 0 {
-			writeTimeout = c.server.config.WriteTimeout
+		writeTimeout := c.writeTimeout
+		if writeTimeout <= 0 {
+			if c.server != nil && c.server.config.WriteTimeout > 0 {
+				writeTimeout = c.server.config.WriteTimeout
+			} else {
+				writeTimeout = 10 * time.Second
+			}
 		}
 		if err := c.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
 			c.Close()
@@ -333,6 +338,7 @@ func (s *Server) handleKCPConn(netConn net.Conn) {
 	}
 	defer s.connManager.Remove(conn.ID())
 
+	s.metrics.totalConns.Add(1)
 	s.logger.Info(fmt.Sprintf("kcp connection established: %s from %s", conn.ID(), conn.RemoteAddr()))
 
 	// 触发连接建立回调

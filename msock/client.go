@@ -42,6 +42,7 @@ type Client struct {
 	codec    Codec
 	router   *Router
 	logger   Logger
+	metrics  clientMetrics
 	handlers struct {
 		onConnect    func(Conn)
 		onDisconnect func(Conn)
@@ -237,6 +238,7 @@ func (c *Client) watchAndReconnect(e *poolEntry, conn Conn, addr string) {
 		if c.handlers.onConnect != nil {
 			c.handlers.onConnect(newConn)
 		}
+		c.metrics.totalReconnects.Add(1)
 		c.logger.Info(fmt.Sprintf("pool[%d] reconnected", e.index))
 
 		c.wg.Add(1)
@@ -286,7 +288,15 @@ func (c *Client) Send(msg Message) error {
 	if conn == nil {
 		return ErrNoAvailableConn
 	}
-	return conn.Send(msg)
+	data, err := c.codec.Encode(msg)
+	if err != nil {
+		return err
+	}
+	if err = conn.SendBytes(data); err != nil {
+		return err
+	}
+	c.metrics.totalSendBytes.Add(int64(len(data)))
+	return nil
 }
 
 // SendBytes 轮询连接池发送原始字节
@@ -295,7 +305,11 @@ func (c *Client) SendBytes(data []byte) error {
 	if conn == nil {
 		return ErrNoAvailableConn
 	}
-	return conn.SendBytes(data)
+	if err := conn.SendBytes(data); err != nil {
+		return err
+	}
+	c.metrics.totalSendBytes.Add(int64(len(data)))
+	return nil
 }
 
 // Close 关闭客户端及所有连接，等待后台 goroutine 退出
@@ -352,6 +366,18 @@ func (c *Client) AvailableConns() int {
 	return n
 }
 
+// Stats 返回客户端统计快照
+func (c *Client) Stats() ClientStats {
+	return ClientStats{
+		PoolSize:        len(c.pool),
+		AvailableConns:  c.AvailableConns(),
+		TotalReconnects: c.metrics.totalReconnects.Load(),
+		TotalMessages:   c.metrics.totalMessages.Load(),
+		TotalRecvBytes:  c.metrics.totalRecvBytes.Load(),
+		TotalSendBytes:  c.metrics.totalSendBytes.Load(),
+	}
+}
+
 // OnConnect 设置连接建立回调
 func (c *Client) OnConnect(fn func(Conn)) {
 	c.handlers.onConnect = fn
@@ -369,6 +395,8 @@ func (c *Client) OnError(fn func(error)) {
 
 // handleMessage 处理消息
 func (c *Client) handleMessage(conn Conn, msg Message) {
+	c.metrics.totalMessages.Add(1)
+	c.metrics.totalRecvBytes.Add(int64(len(msg.Data())))
 	if c.router == nil {
 		c.logger.Warn("router not set, dropping message")
 		return
@@ -386,10 +414,11 @@ func (c *Client) dialTCP(addr string) (Conn, error) {
 
 	conn := &tcpClientConn{
 		tcpConn: &tcpConn{
-			baseConn: newBaseConn(ConnTypeTCP),
-			Conn:     netConn,
-			server:   nil,
-			codec:    c.codec,
+			baseConn:     newBaseConn(ConnTypeTCP),
+			Conn:         netConn,
+			server:       nil,
+			codec:        c.codec,
+			writeTimeout: c.config.WriteTimeout,
 		},
 		client: c,
 	}
@@ -497,10 +526,11 @@ func (c *Client) dialKCP(addr string) (Conn, error) {
 
 	clientConn := &kcpClientConn{
 		kcpConn: &kcpConn{
-			baseConn: newBaseConn(ConnTypeKCP),
-			Conn:     rawConn,
-			server:   nil,
-			codec:    c.codec,
+			baseConn:     newBaseConn(ConnTypeKCP),
+			Conn:         rawConn,
+			server:       nil,
+			codec:        c.codec,
+			writeTimeout: c.config.WriteTimeout,
 		},
 		client: c,
 	}

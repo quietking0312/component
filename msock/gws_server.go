@@ -29,6 +29,7 @@ func (h *gwsEventHandler) OnOpen(socket *gws.Conn) {
 	}
 
 	socket.Session().Store("msock_conn", conn)
+	h.server.metrics.totalConns.Add(1)
 	h.server.logger.Info(fmt.Sprintf("gws connection established: %s from %s", conn.ID(), conn.RemoteAddr()))
 
 	if h.server.handlers.onConnect != nil {

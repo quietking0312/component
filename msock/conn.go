@@ -143,8 +143,9 @@ func (c *baseConn) waitClose() <-chan struct{} {
 type tcpConn struct {
 	*baseConn
 	net.Conn
-	server *Server
-	codec  Codec
+	server       *Server
+	codec        Codec
+	writeTimeout time.Duration // 0 表示使用 server.config 或默认值
 }
 
 // newTCPConn 创建TCP连接
@@ -189,9 +190,13 @@ func (c *tcpConn) Send(msg Message) error {
 func (c *tcpConn) sendLoop() {
 	defer c.sendWg.Done()
 	for data := range c.sendCh {
-		writeTimeout := 10 * time.Second
-		if c.server != nil && c.server.config.WriteTimeout > 0 {
-			writeTimeout = c.server.config.WriteTimeout
+		writeTimeout := c.writeTimeout
+		if writeTimeout <= 0 {
+			if c.server != nil && c.server.config.WriteTimeout > 0 {
+				writeTimeout = c.server.config.WriteTimeout
+			} else {
+				writeTimeout = 10 * time.Second
+			}
 		}
 		if err := c.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
 			c.Close()

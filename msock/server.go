@@ -17,6 +17,7 @@ type Server struct {
 	codec       Codec
 	connManager *ConnManager
 	logger      Logger
+	metrics     serverMetrics
 
 	listener   net.Listener
 	httpServer *http.Server
@@ -163,6 +164,7 @@ func (s *Server) handleConn(netConn net.Conn) {
 	}
 	defer s.connManager.Remove(conn.ID())
 
+	s.metrics.totalConns.Add(1)
 	s.logger.Info(fmt.Sprintf("connection established: %s from %s", conn.ID(), conn.RemoteAddr()))
 
 	// 触发连接建立回调
@@ -188,6 +190,9 @@ func (s *Server) handleMessage(conn Conn, msg Message) {
 	if bc := extractBaseConn(conn); bc != nil {
 		bc.TouchHeartbeat()
 	}
+
+	s.metrics.totalMessages.Add(1)
+	s.metrics.totalRecvBytes.Add(int64(len(msg.Data())))
 
 	if s.router == nil {
 		s.logger.Warn(fmt.Sprintf("router not set, dropping message from %s", conn.ID()))
@@ -248,7 +253,15 @@ func (s *Server) SendTo(connID string, msg Message) error {
 	if !ok {
 		return ErrConnClosed
 	}
-	return conn.Send(msg)
+	data, err := s.codec.Encode(msg)
+	if err != nil {
+		return err
+	}
+	if err = conn.SendBytes(data); err != nil {
+		return err
+	}
+	s.metrics.totalSendBytes.Add(int64(len(data)))
+	return nil
 }
 
 // Broadcast 广播消息（先编码一次，再批量发送字节，避免重复编码）
@@ -259,9 +272,21 @@ func (s *Server) Broadcast(msg Message) {
 		return
 	}
 	s.connManager.BroadcastBytes(data)
+	s.metrics.totalSendBytes.Add(int64(len(data)) * int64(s.connManager.Count()))
 }
 
 // ConnCount 返回当前连接数
 func (s *Server) ConnCount() int {
 	return s.connManager.Count()
+}
+
+// Stats 返回服务端统计快照
+func (s *Server) Stats() ServerStats {
+	return ServerStats{
+		CurrentConns:   int64(s.connManager.Count()),
+		TotalConns:     s.metrics.totalConns.Load(),
+		TotalMessages:  s.metrics.totalMessages.Load(),
+		TotalRecvBytes: s.metrics.totalRecvBytes.Load(),
+		TotalSendBytes: s.metrics.totalSendBytes.Load(),
+	}
 }
