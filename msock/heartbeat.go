@@ -100,8 +100,8 @@ func (s *Server) RegisterHeartbeat(router *Router) {
 
 // ========== 客户端心跳发送 ==========
 
-// startHeartbeat 客户端启动心跳 goroutine
-// 按 HeartbeatInterval 定时发送 Ping，超过 HeartbeatTimeout 未收到 Pong 则关闭连接触发重连。
+// startHeartbeat 客户端启动心跳 goroutine（由 Connect 通过 sync.Once 调用，保证只启动一次）。
+// 每个心跳周期遍历连接池：超时则关闭连接触发重连，否则发送 Ping。
 func (c *Client) startHeartbeat() {
 	if c.config.HeartbeatInterval <= 0 || c.config.HeartbeatTimeout <= 0 {
 		return
@@ -114,26 +114,26 @@ func (c *Client) startHeartbeat() {
 		for {
 			select {
 			case <-ticker.C:
-				c.mu.RLock()
-				conn := c.conn
-				c.mu.RUnlock()
+				for _, e := range c.pool {
+					e.mu.Lock()
+					conn := e.conn
+					e.mu.Unlock()
 
-				if conn == nil || conn.IsClosed() {
-					return
-				}
+					if conn == nil || conn.IsClosed() {
+						continue
+					}
 
-				// 检查上次 Pong 是否超时
-				bc := extractBaseConn(conn)
-				if bc != nil && time.Since(bc.LastHeartbeat()) > c.config.HeartbeatTimeout {
-					c.logger.Warn(fmt.Sprintf("heartbeat timeout, closing connection"))
-					_ = conn.Close()
-					return
-				}
+					bc := extractBaseConn(conn)
+					if bc != nil && time.Since(bc.LastHeartbeat()) > c.config.HeartbeatTimeout {
+						c.logger.Warn(fmt.Sprintf("heartbeat timeout, closing pool[%d]", e.index))
+						_ = conn.Close()
+						continue
+					}
 
-				// 发送 Ping
-				ping := NewMessage(c.config.HeartbeatPingID, nil)
-				if err := conn.Send(ping); err != nil && !conn.IsClosed() {
-					c.logger.Warn(fmt.Sprintf("send ping error: %v", err))
+					ping := NewMessage(c.config.HeartbeatPingID, nil)
+					if err := conn.Send(ping); err != nil && !conn.IsClosed() {
+						c.logger.Warn(fmt.Sprintf("pool[%d] send ping error: %v", e.index, err))
+					}
 				}
 
 			case <-c.closeCh:

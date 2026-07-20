@@ -134,25 +134,41 @@ type ServerConfig struct {
 	KCPConfig *KCPConfig
 	// GWS 配置，ConnType 为 ConnTypeGWS 时生效
 	GWSConfig *GWSConfig
+
+	// PoolSize 客户端连接池大小，默认 1
+	PoolSize int
+	// ReconnectEnable 断线后是否自动重连
+	ReconnectEnable bool
+	// ReconnectInitDelay 首次重连等待时间，默认 1s
+	ReconnectInitDelay time.Duration
+	// ReconnectMaxDelay 最大重连等待时间（指数退避上限），默认 30s
+	ReconnectMaxDelay time.Duration
+	// ReconnectMaxAttempts 最大重连次数，0 表示无限重试
+	ReconnectMaxAttempts int
 }
 
 // DefaultServerConfig 返回默认服务器配置
 func DefaultServerConfig() *ServerConfig {
 	return &ServerConfig{
-		Address:           ":8080",
-		ConnType:          ConnTypeTCP,
-		Logger:            &defaultLogger{},
-		ReadBufferSize:    4096,
-		WriteBufferSize:   4096,
-		MaxConnections:    10000,
-		ReadTimeout:       60 * time.Second,
-		WriteTimeout:      10 * time.Second,
-		HeartbeatInterval: 30 * time.Second,
-		HeartbeatTimeout:  90 * time.Second,
-		HeartbeatPingID:   0xFFFFFFFE,
-		HeartbeatPongID:   0xFFFFFFFF,
-		KCPConfig:         DefaultKCPConfig(),
-		GWSConfig:         nil,
+		Address:              ":8080",
+		ConnType:             ConnTypeTCP,
+		Logger:               &defaultLogger{},
+		ReadBufferSize:       4096,
+		WriteBufferSize:      4096,
+		MaxConnections:       10000,
+		ReadTimeout:          60 * time.Second,
+		WriteTimeout:         10 * time.Second,
+		HeartbeatInterval:    30 * time.Second,
+		HeartbeatTimeout:     90 * time.Second,
+		HeartbeatPingID:      0xFFFFFFFE,
+		HeartbeatPongID:      0xFFFFFFFF,
+		KCPConfig:            DefaultKCPConfig(),
+		GWSConfig:            nil,
+		PoolSize:             1,
+		ReconnectEnable:      false,
+		ReconnectInitDelay:   time.Second,
+		ReconnectMaxDelay:    30 * time.Second,
+		ReconnectMaxAttempts: 0,
 	}
 }
 
@@ -254,5 +270,36 @@ func WithKCPConfig(cfg *KCPConfig) ServerOption {
 func WithGWSConfig(cfg *GWSConfig) ServerOption {
 	return func(c *ServerConfig) {
 		c.GWSConfig = cfg
+	}
+}
+
+// WithPoolSize 设置客户端连接池大小（最小为 1）
+func WithPoolSize(n int) ServerOption {
+	return func(c *ServerConfig) {
+		if n > 0 {
+			c.PoolSize = n
+		}
+	}
+}
+
+// WithReconnect 设置是否启用断线重连
+func WithReconnect(enable bool) ServerOption {
+	return func(c *ServerConfig) {
+		c.ReconnectEnable = enable
+	}
+}
+
+// WithReconnectDelay 设置断线重连的初始等待时间和最大等待时间
+func WithReconnectDelay(initDelay, maxDelay time.Duration) ServerOption {
+	return func(c *ServerConfig) {
+		c.ReconnectInitDelay = initDelay
+		c.ReconnectMaxDelay = maxDelay
+	}
+}
+
+// WithReconnectMaxAttempts 设置最大重连次数（0 表示无限重试）
+func WithReconnectMaxAttempts(n int) ServerOption {
+	return func(c *ServerConfig) {
+		c.ReconnectMaxAttempts = n
 	}
 }

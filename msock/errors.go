@@ -41,4 +41,7 @@ var (
 
 	// ErrSendChannelFull 发送通道已满
 	ErrSendChannelFull = errors.New("send channel full")
+
+	// ErrNoAvailableConn 连接池中无可用连接
+	ErrNoAvailableConn = errors.New("no available connection in pool")
 )

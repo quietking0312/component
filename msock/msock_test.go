@@ -444,6 +444,75 @@ func TestLoggingMiddleware(t *testing.T) {
 	assert.True(t, len(logger.debugs) > 0)
 }
 
+// TestClient_PoolSize 测试客户端连接池会建立多个连接
+func TestClient_PoolSize(t *testing.T) {
+	router := NewRouter()
+	received := make(chan Message, 10)
+
+	router.Register(1, func(conn Conn, msg Message) {
+		received <- msg
+		reply := NewMessage(2, []byte("reply"))
+		conn.Send(reply)
+	})
+
+	server, err := NewServer(
+		WithAddress(":0"),
+		WithConnType(ConnTypeTCP),
+		WithCodec(NewSimpleCodec()),
+	)
+	assert.NoError(t, err)
+	server.SetRouter(router)
+
+	go server.Run()
+	defer server.Stop()
+
+	time.Sleep(100 * time.Millisecond)
+
+	addr := server.listener.Addr().String()
+
+	clientRouter := NewRouter()
+	clientReceived := make(chan Message, 10)
+	clientRouter.Register(2, func(conn Conn, msg Message) {
+		clientReceived <- msg
+	})
+
+	client := NewClient(
+		WithConnType(ConnTypeTCP),
+		WithCodec(NewSimpleCodec()),
+		WithPoolSize(3),
+	)
+	client.SetRouter(clientRouter)
+
+	err = client.Connect(addr)
+	assert.NoError(t, err)
+	defer client.Close()
+
+	time.Sleep(50 * time.Millisecond)
+
+	assert.Equal(t, 3, client.PoolSize())
+	assert.Equal(t, 3, client.AvailableConns())
+
+	msg := NewMessage(1, []byte("hello"))
+	err = client.Send(msg)
+	assert.NoError(t, err)
+
+	select {
+	case m := <-received:
+		assert.Equal(t, uint32(1), m.RouteID())
+		assert.Equal(t, "hello", string(m.Data()))
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for server to receive message")
+	}
+
+	select {
+	case m := <-clientReceived:
+		assert.Equal(t, uint32(2), m.RouteID())
+		assert.Equal(t, "reply", string(m.Data()))
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for client to receive reply")
+	}
+}
+
 // BenchmarkRouter 路由性能测试
 func BenchmarkRouter(b *testing.B) {
 	router := NewRouter()
