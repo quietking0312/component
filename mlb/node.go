@@ -1,19 +1,20 @@
 package mlb
 
 import (
+	"maps"
 	"sync/atomic"
 )
 
 // Node 表示一个逻辑服务器节点
 type Node struct {
-	ID                string            // 节点唯一标识
-	Addr              string            // 节点地址
-	Tags              map[string]string // 节点标签，可用于版本、区域等业务筛选
-	weight            int               // 基础权重（私有，防止外部并发写后 rebuildRing 未感知）
-	maxLoad           int64             // 最大承载用户数（构造后不可变，无需 atomic）
-	overloadThreshold float64           // 过载阈值，默认 0.95
-	active            int64             // 当前活跃用户数
-	online            atomic.Bool       // 是否在线（atomic，消除裸 bool 竞争）
+	ID                string                            // 节点唯一标识
+	Addr              string                            // 节点地址
+	Tags              atomic.Pointer[map[string]string] // 节点标签，可用于版本、区域等业务筛选
+	weight            int                               // 基础权重（私有，防止外部并发写后 rebuildRing 未感知）
+	maxLoad           int64                             // 最大承载用户数（构造后不可变，无需 atomic）
+	overloadThreshold float64                           // 过载阈值，默认 0.95
+	active            int64                             // 当前活跃用户数
+	online            atomic.Bool                       // 是否在线（atomic，消除裸 bool 竞争）
 }
 
 // NodeOption 节点配置选项
@@ -31,16 +32,15 @@ func WithOverloadThreshold(threshold float64) NodeOption {
 }
 
 // WithTags 为节点设置标签，可用于 Pick 时的条件筛选。
-// 传入的 tags 会被拷贝到节点中，避免外部后续修改影响节点状态。
+// 传入的 tags 会被拷贝，避免外部后续修改影响节点状态。
 func WithTags(tags map[string]string) NodeOption {
 	return func(n *Node) {
 		if len(tags) == 0 {
 			return
 		}
-		n.Tags = make(map[string]string, len(tags))
-		for k, v := range tags {
-			n.Tags[k] = v
-		}
+		copied := make(map[string]string, len(tags))
+		maps.Copy(copied, tags)
+		n.Tags.Store(&copied)
 	}
 }
 
@@ -135,10 +135,11 @@ func (n *Node) IsOnline() bool {
 
 // Tag 返回指定标签的值，不存在时 ok 为 false。
 func (n *Node) Tag(key string) (string, bool) {
-	if n == nil || n.Tags == nil {
+	p := n.Tags.Load()
+	if p == nil {
 		return "", false
 	}
-	v, ok := n.Tags[key]
+	v, ok := (*p)[key]
 	return v, ok
 }
 
@@ -146,6 +147,18 @@ func (n *Node) Tag(key string) (string, bool) {
 func (n *Node) HasTag(key, value string) bool {
 	v, ok := n.Tag(key)
 	return ok && v == value
+}
+
+// SetTags 替换节点全部标签，传入的 tags 会被拷贝。
+// 传入 nil 或空 map 时清空所有标签。
+func (n *Node) SetTags(tags map[string]string) {
+	if len(tags) == 0 {
+		n.Tags.Store(nil)
+		return
+	}
+	copied := make(map[string]string, len(tags))
+	maps.Copy(copied, tags)
+	n.Tags.Store(&copied)
 }
 
 // EffectiveWeight 计算有效权重
