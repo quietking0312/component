@@ -28,10 +28,11 @@ type Server struct {
 		onError      func(Conn, error)
 	}
 
-	closed int32
-	stopCh chan struct{}
-	wg     sync.WaitGroup
-	mu     sync.Mutex
+	closed     int32
+	stopCh     chan struct{}
+	wg         sync.WaitGroup
+	BusinessWg sync.WaitGroup // 业务方在 handler 内异步 goroutine 的生命周期管理
+	mu         sync.Mutex
 }
 
 // NewServer 创建服务器
@@ -210,22 +211,25 @@ func (s *Server) Stop() error {
 	s.logger.Info(fmt.Sprintf("stopping server..."))
 	close(s.stopCh)
 
-	// 关闭监听器
+	// 关闭监听器，不再接受新连接
 	if s.listener != nil {
 		s.listener.Close()
 	}
 
-	// 关闭HTTP服务器
+	// 关闭HTTP服务器，不再接受新连接
 	if s.httpServer != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		s.httpServer.Shutdown(ctx)
 	}
 
-	// 关闭所有连接
+	// 等待业务方异步 goroutine 执行完毕
+	s.BusinessWg.Wait()
+
+	// 关闭所有连接（同时解除 readLoop 的阻塞读，sendLoop 把队列剩余数据发完后退出）
 	s.connManager.CloseAll()
 
-	// 等待所有goroutine完成
+	// 等待所有 readLoop / sendLoop goroutine 退出
 	s.wg.Wait()
 
 	s.logger.Info(fmt.Sprintf("server stopped"))
