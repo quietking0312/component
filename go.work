@@ -20,6 +20,7 @@ use (
 	./mjwt
 	./mlb
 	./mlog
+	./mds
 	./mmath
 	./mmen
 	./mpubsub

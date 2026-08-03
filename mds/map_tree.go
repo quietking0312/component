@@ -1,4 +1,4 @@
-package mtool
+package mds
 
 type MapTreeNode struct {
 	Children map[rune]*MapTreeNode
