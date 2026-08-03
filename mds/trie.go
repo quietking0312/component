@@ -1,5 +1,7 @@
 package mds
 
+import "sync"
+
 type trieNode struct {
 	children map[rune]*trieNode
 	fail     *trieNode // AC: 失配指针
@@ -13,17 +15,23 @@ func newTrieNode() *trieNode {
 }
 
 type Trie struct {
-	root   *trieNode
-	dirty  bool            // Insert/Delete 后置 true，Build 后置 false
-	except func(rune) bool // 返回 true 的字符在 Match 时跳过（不参与匹配，但保留在结果坐标中）
+	root    *trieNode
+	dirty   bool            // Insert/Delete 后置 true，Build 后置 false
+	except  func(rune) bool // 返回 true 的字符在 Match 时跳过（不参与匹配，但保留在结果坐标中）
+	posPool sync.Pool       // 复用 positions 切片，降低 GC 压力
 }
 
 func NewTrie() *Trie {
-	return &Trie{
+	t := &Trie{
 		root:   newTrieNode(),
 		dirty:  true,
 		except: func(rune) bool { return false },
 	}
+	t.posPool = sync.Pool{New: func() any {
+		s := make([]int, 0, 64)
+		return &s
+	}}
+	return t
 }
 
 func (t *Trie) SetExcept(except func(rune) bool) {
@@ -132,8 +140,12 @@ func (t *Trie) Match(text string) [][2]int {
 	result := make([][2]int, 0)
 	node := t.root
 
-	// positions[k] = 第 k 个有效字符（非 except）在原文中的 rune 下标
-	positions := make([]int, 0, len(runes))
+	pos := t.posPool.Get().(*[]int)
+	positions := (*pos)[:0]
+	defer func() {
+		*pos = positions
+		t.posPool.Put(pos)
+	}()
 
 	for i, c := range runes {
 		if t.except(c) {
