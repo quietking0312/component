@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -349,10 +350,14 @@ func scanLine(conn net.Conn, maxLen int) ([]byte, error) {
 
 // ConnManager 分片锁连接管理器
 // 32 个分片，按连接 ID 首字节哈希，锁竞争降低为原来的 1/32
+// broadcastMinConnsPerWorkerFloor 广播 worker 粒度的框架最低限制
+const broadcastMinConnsPerWorkerFloor = 16
+
 type ConnManager struct {
-	shards  [32]connShard
-	maxConn int
-	total   atomic.Int64
+	shards            [32]connShard
+	maxConn           int
+	minConnsPerWorker int
+	total             atomic.Int64
 }
 
 type connShard struct {
@@ -361,9 +366,12 @@ type connShard struct {
 	_     [56]byte // 填充到 64 字节，避免 false sharing
 }
 
-// NewConnManager 创建连接管理器
-func NewConnManager(maxConn int) *ConnManager {
-	m := &ConnManager{maxConn: maxConn}
+// NewConnManager 创建连接管理器，minConnsPerWorker 低于框架最低限制时取框架值
+func NewConnManager(maxConn, minConnsPerWorker int) *ConnManager {
+	if minConnsPerWorker < broadcastMinConnsPerWorkerFloor {
+		minConnsPerWorker = broadcastMinConnsPerWorkerFloor
+	}
+	m := &ConnManager{maxConn: maxConn, minConnsPerWorker: minConnsPerWorker}
 	for i := range m.shards {
 		m.shards[i].conns = make(map[string]Conn)
 	}
@@ -459,12 +467,14 @@ func (m *ConnManager) BroadcastBytesTo(data []byte, ids []string) int {
 		return 0
 	}
 
-	batchSize := 256
-	workerCount := (len(conns) + batchSize - 1) / batchSize
-	if workerCount > 8 {
-		workerCount = 8
-		batchSize = (len(conns) + workerCount - 1) / workerCount
+	maxWorkers := runtime.GOMAXPROCS(0)
+	workerCount := len(conns) / m.minConnsPerWorker
+	if workerCount < 1 {
+		workerCount = 1
+	} else if workerCount > maxWorkers {
+		workerCount = maxWorkers
 	}
+	batchSize := (len(conns) + workerCount - 1) / workerCount
 
 	var (
 		wg      sync.WaitGroup

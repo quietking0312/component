@@ -50,7 +50,7 @@ func NewServer(opts ...ServerOption) (*Server, error) {
 		config:      config,
 		codec:       config.Codec,
 		logger:      config.Logger,
-		connManager: NewConnManager(config.MaxConnections),
+		connManager: NewConnManager(config.MaxConnections, config.BroadcastMinConnsPerWorker),
 		stopCh:      make(chan struct{}),
 	}, nil
 }
