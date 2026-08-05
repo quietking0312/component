@@ -268,14 +268,14 @@ func (s *Server) SendTo(connID string, msg Message) error {
 	return nil
 }
 
-// Broadcast 广播消息（先编码一次，再批量发送字节，避免重复编码）
-func (s *Server) Broadcast(msg Message) {
+// Broadcast 广播消息，ids 为空则广播到所有连接，否则只广播到指定 ID 的连接
+func (s *Server) Broadcast(msg Message, ids ...string) {
 	data, err := s.codec.Encode(msg)
 	if err != nil {
 		s.logger.Error(fmt.Sprintf("broadcast encode error: %v", err))
 		return
 	}
-	sent := s.connManager.BroadcastBytes(data)
+	sent := s.connManager.BroadcastBytesTo(data, ids)
 	s.metrics.totalSendBytes.Add(int64(len(data)) * int64(sent))
 }
 

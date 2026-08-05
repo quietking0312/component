@@ -439,7 +439,22 @@ func (m *ConnManager) Count() int {
 
 // BroadcastBytes 广播原始字节到所有连接，返回成功入队的连接数
 func (m *ConnManager) BroadcastBytes(data []byte) int {
-	conns := m.GetAll()
+	return m.BroadcastBytesTo(data, nil)
+}
+
+// BroadcastBytesTo 广播原始字节到指定连接，ids 为空则广播到所有连接，返回成功入队的连接数
+func (m *ConnManager) BroadcastBytesTo(data []byte, ids []string) int {
+	var conns []Conn
+	if len(ids) == 0 {
+		conns = m.GetAll()
+	} else {
+		conns = make([]Conn, 0, len(ids))
+		for _, id := range ids {
+			if conn, ok := m.Get(id); ok {
+				conns = append(conns, conn)
+			}
+		}
+	}
 	if len(conns) == 0 {
 		return 0
 	}
