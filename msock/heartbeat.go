@@ -49,23 +49,8 @@ func (s *Server) checkHeartbeats() {
 
 // extractBaseConn 从 Conn 接口中提取 *baseConn
 func extractBaseConn(conn Conn) *baseConn {
-	switch c := conn.(type) {
-	case *tcpConn:
-		return c.baseConn
-	case *tcpClientConn:
-		return c.baseConn
-	case *kcpConn:
-		return c.baseConn
-	case *kcpClientConn:
-		return c.baseConn
-	case *wsConn:
-		return c.baseConn
-	case *wsClientConn:
-		return c.baseConn
-	case *gwsConn:
-		return c.baseConn
-	case *gwsClientConn:
-		return c.baseConn
+	if bc, ok := conn.(baseConner); ok {
+		return bc.getBaseConn()
 	}
 	return nil
 }
