@@ -50,7 +50,7 @@ func NewServer(opts ...ServerOption) (*Server, error) {
 		config:      config,
 		codec:       config.Codec,
 		logger:      config.Logger,
-		connManager: NewConnManager(config.MaxConnections, config.BroadcastMinConnsPerWorker),
+		connManager: NewConnManager(config.MaxConnections),
 		stopCh:      make(chan struct{}),
 	}, nil
 }
@@ -268,14 +268,30 @@ func (s *Server) SendTo(connID string, msg Message) error {
 	return nil
 }
 
-// Broadcast 广播消息，ids 为空则广播到所有连接，否则只广播到指定 ID 的连接
+// Broadcast 广播消息到指定 ID 的连接，ids 为空则广播到所有连接
 func (s *Server) Broadcast(msg Message, ids ...string) {
 	data, err := s.codec.Encode(msg)
 	if err != nil {
 		s.logger.Error(fmt.Sprintf("broadcast encode error: %v", err))
 		return
 	}
-	sent := s.connManager.BroadcastBytesTo(data, ids)
+	var sent int
+	if len(ids) == 0 {
+		sent = s.connManager.BroadcastBytesFilter(data, nil)
+	} else {
+		sent = s.connManager.BroadcastBytesTo(data, ids)
+	}
+	s.metrics.totalSendBytes.Add(int64(len(data)) * int64(sent))
+}
+
+// BroadcastFilter 广播消息到满足条件的连接，filter 为 nil 则广播到所有连接
+func (s *Server) BroadcastFilter(msg Message, filter func(Conn) bool) {
+	data, err := s.codec.Encode(msg)
+	if err != nil {
+		s.logger.Error(fmt.Sprintf("broadcast encode error: %v", err))
+		return
+	}
+	sent := s.connManager.BroadcastBytesFilter(data, filter)
 	s.metrics.totalSendBytes.Add(int64(len(data)) * int64(sent))
 }
 

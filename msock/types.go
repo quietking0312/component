@@ -149,35 +149,31 @@ type ServerConfig struct {
 	ReconnectMaxAttempts int
 	// IDGenerator 连接 ID 生成函数，默认使用 UUID
 	IDGenerator func() string
-	// BroadcastMinConnsPerWorker 广播时每个 worker 至少处理的连接数，值越小并行度越高
-	// 框架最低限制为 16，默认 128
-	BroadcastMinConnsPerWorker int
 }
 
 // DefaultServerConfig 返回默认服务器配置
 func DefaultServerConfig() *ServerConfig {
 	return &ServerConfig{
-		Address:                    ":8080",
-		ConnType:                   ConnTypeTCP,
-		Logger:                     &defaultLogger{},
-		ReadBufferSize:             4096,
-		WriteBufferSize:            4096,
-		MaxConnections:             10000,
-		ReadTimeout:                60 * time.Second,
-		WriteTimeout:               10 * time.Second,
-		HeartbeatInterval:          30 * time.Second,
-		HeartbeatTimeout:           90 * time.Second,
-		HeartbeatPingID:            0xFFFFFFFE,
-		HeartbeatPongID:            0xFFFFFFFF,
-		KCPConfig:                  DefaultKCPConfig(),
-		GWSConfig:                  nil,
-		PoolSize:                   1,
-		ReconnectEnable:            false,
-		ReconnectInitDelay:         time.Second,
-		ReconnectMaxDelay:          30 * time.Second,
-		ReconnectMaxAttempts:       0,
-		IDGenerator:                func() string { return uuid.New().String() },
-		BroadcastMinConnsPerWorker: 128,
+		Address:              ":8080",
+		ConnType:             ConnTypeTCP,
+		Logger:               &defaultLogger{},
+		ReadBufferSize:       4096,
+		WriteBufferSize:      4096,
+		MaxConnections:       10000,
+		ReadTimeout:          60 * time.Second,
+		WriteTimeout:         10 * time.Second,
+		HeartbeatInterval:    30 * time.Second,
+		HeartbeatTimeout:     90 * time.Second,
+		HeartbeatPingID:      0xFFFFFFFE,
+		HeartbeatPongID:      0xFFFFFFFF,
+		KCPConfig:            DefaultKCPConfig(),
+		GWSConfig:            nil,
+		PoolSize:             1,
+		ReconnectEnable:      false,
+		ReconnectInitDelay:   time.Second,
+		ReconnectMaxDelay:    30 * time.Second,
+		ReconnectMaxAttempts: 0,
+		IDGenerator:          func() string { return uuid.New().String() },
 	}
 }
 
@@ -319,13 +315,5 @@ func WithIDGenerator(fn func() string) ServerOption {
 		if fn != nil {
 			c.IDGenerator = fn
 		}
-	}
-}
-
-// WithBroadcastMinConnsPerWorker 设置广播时每个 worker 最少处理的连接数
-// 值越小并行度越高，框架最低限制为 16
-func WithBroadcastMinConnsPerWorker(n int) ServerOption {
-	return func(c *ServerConfig) {
-		c.BroadcastMinConnsPerWorker = n
 	}
 }

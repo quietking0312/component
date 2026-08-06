@@ -350,14 +350,10 @@ func scanLine(conn net.Conn, maxLen int) ([]byte, error) {
 
 // ConnManager 分片锁连接管理器
 // 32 个分片，按连接 ID 首字节哈希，锁竞争降低为原来的 1/32
-// broadcastMinConnsPerWorkerFloor 广播 worker 粒度的框架最低限制
-const broadcastMinConnsPerWorkerFloor = 16
-
 type ConnManager struct {
-	shards            [32]connShard
-	maxConn           int
-	minConnsPerWorker int
-	total             atomic.Int64
+	shards  [32]connShard
+	maxConn int
+	total   atomic.Int64
 }
 
 type connShard struct {
@@ -366,12 +362,9 @@ type connShard struct {
 	_     [56]byte // 填充到 64 字节，避免 false sharing
 }
 
-// NewConnManager 创建连接管理器，minConnsPerWorker 低于框架最低限制时取框架值
-func NewConnManager(maxConn, minConnsPerWorker int) *ConnManager {
-	if minConnsPerWorker < broadcastMinConnsPerWorkerFloor {
-		minConnsPerWorker = broadcastMinConnsPerWorkerFloor
-	}
-	m := &ConnManager{maxConn: maxConn, minConnsPerWorker: minConnsPerWorker}
+// NewConnManager 创建连接管理器
+func NewConnManager(maxConn int) *ConnManager {
+	m := &ConnManager{maxConn: maxConn}
 	for i := range m.shards {
 		m.shards[i].conns = make(map[string]Conn)
 	}
@@ -447,62 +440,93 @@ func (m *ConnManager) Count() int {
 
 // BroadcastBytes 广播原始字节到所有连接，返回成功入队的连接数
 func (m *ConnManager) BroadcastBytes(data []byte) int {
-	return m.BroadcastBytesTo(data, nil)
+	return m.BroadcastBytesFilter(data, nil)
 }
 
-// BroadcastBytesTo 广播原始字节到指定连接，ids 为空则广播到所有连接，返回成功入队的连接数
+// BroadcastBytesTo 广播原始字节到指定 ID 的连接，返回成功入队的连接数
 func (m *ConnManager) BroadcastBytesTo(data []byte, ids []string) int {
-	var conns []Conn
 	if len(ids) == 0 {
-		conns = m.GetAll()
-	} else {
-		conns = make([]Conn, 0, len(ids))
-		for _, id := range ids {
-			if conn, ok := m.Get(id); ok {
-				conns = append(conns, conn)
+		return m.BroadcastBytesFilter(data, nil)
+	}
+	var succeed int
+	for _, id := range ids {
+		if conn, ok := m.Get(id); ok {
+			if !conn.IsClosed() && conn.SendBytes(data) == nil {
+				succeed++
 			}
 		}
 	}
-	if len(conns) == 0 {
-		return 0
-	}
+	return succeed
+}
 
-	maxWorkers := runtime.GOMAXPROCS(0)
-	workerCount := len(conns) / m.minConnsPerWorker
-	if workerCount < 1 {
-		workerCount = 1
-	} else if workerCount > maxWorkers {
-		workerCount = maxWorkers
+// BroadcastBytesFilter 广播原始字节到满足条件的连接，filter 为 nil 则广播到所有连接，返回成功入队的连接数
+func (m *ConnManager) BroadcastBytesFilter(data []byte, filter func(Conn) bool) int {
+	return m.broadcastAll(data, filter)
+}
+
+// connSlicePool 复用连接切片，减少广播时的 GC 压力
+var connSlicePool = sync.Pool{
+	New: func() interface{} {
+		s := make([]Conn, 0, 1024)
+		return &s
+	},
+}
+
+// broadcastAll 全量广播：按 shard 快速复制指针快照后释放读锁，再并行发送
+// filter 不为 nil 时只发送满足条件的连接
+func (m *ConnManager) broadcastAll(data []byte, filter func(Conn) bool) int {
+	sp := connSlicePool.Get().(*[]Conn)
+	conns := (*sp)[:0]
+
+	for i := range m.shards {
+		s := &m.shards[i]
+		s.mu.RLock()
+		for _, conn := range s.conns {
+			if filter == nil || filter(conn) {
+				conns = append(conns, conn)
+			}
+		}
+		s.mu.RUnlock()
 	}
-	batchSize := (len(conns) + workerCount - 1) / workerCount
 
 	var (
 		wg      sync.WaitGroup
 		succeed atomic.Int64
 	)
+	workerCount := runtime.GOMAXPROCS(0)
+	if workerCount > len(conns) {
+		workerCount = len(conns)
+	}
+	if workerCount == 0 {
+		*sp = conns
+		connSlicePool.Put(sp)
+		return 0
+	}
+	batchSize := (len(conns) + workerCount - 1) / workerCount
 	for i := 0; i < workerCount; i++ {
 		start := i * batchSize
-		if start >= len(conns) {
-			break
-		}
 		end := start + batchSize
 		if end > len(conns) {
 			end = len(conns)
 		}
-		batch := conns[start:end]
 		wg.Add(1)
-		go func(b []Conn) {
+		go func(batch []Conn) {
 			defer wg.Done()
-			for _, conn := range b {
-				if !conn.IsClosed() {
-					if conn.SendBytes(data) == nil {
-						succeed.Add(1)
-					}
+			var n int64
+			for _, conn := range batch {
+				if !conn.IsClosed() && conn.SendBytes(data) == nil {
+					n++
 				}
 			}
-		}(batch)
+			if n > 0 {
+				succeed.Add(n)
+			}
+		}(conns[start:end])
 	}
 	wg.Wait()
+
+	*sp = conns
+	connSlicePool.Put(sp)
 	return int(succeed.Load())
 }
 

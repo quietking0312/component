@@ -353,7 +353,7 @@ func TestCodec_LineCodec(t *testing.T) {
 
 // TestConnManager 测试连接管理器
 func TestConnManager(t *testing.T) {
-	manager := NewConnManager(10, 128)
+	manager := NewConnManager(10)
 
 	// 创建模拟连接
 	conn := &mockConn{
@@ -382,7 +382,7 @@ func TestConnManager(t *testing.T) {
 
 // TestConnManager_MaxConnections 测试最大连接数限制
 func TestConnManager_MaxConnections(t *testing.T) {
-	manager := NewConnManager(2, 128)
+	manager := NewConnManager(2)
 
 	conn1 := &mockConn{id: "1", data: make(map[interface{}]interface{})}
 	conn2 := &mockConn{id: "2", data: make(map[interface{}]interface{})}
