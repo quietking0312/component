@@ -6,6 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/sys/cpu"
 )
 
 // bodyPool 复用 body 读取缓冲，减少 GC 压力
@@ -156,7 +158,7 @@ type ConnManager struct {
 type connShard struct {
 	mu    sync.RWMutex
 	conns map[string]Conn
-	_     [56]byte // 填充到 64 字节，避免 false sharing
+	_     cpu.CacheLinePad
 }
 
 // NewConnManager 创建连接管理器
