@@ -215,10 +215,10 @@ func (s *SQLXStore) Update(ctx context.Context, entity Entity) error {
 		return err
 	}
 
-	// 调用方在写入前已调用 IncrementVersion，所以 entity.Version() 是新版本，
-	// entity.Version()-1 是写入前的旧版本，用等值匹配实现真正的乐观锁。
+	// write-back 缓存场景：内存中可能多次写入后才刷盘，DB 版本可能落后多个版本号，
+	// 用 < 而非 = 允许跨版本覆盖，同时仍能阻止低版本数据覆盖已落盘的高版本数据。
 	query := fmt.Sprintf(
-		"UPDATE %s SET %s = ?, %s = ?, %s = 0 WHERE %s = ? AND %s = ?",
+		"UPDATE %s SET %s = ?, %s = ?, %s = 0 WHERE %s = ? AND %s < ?",
 		s.config.TableName,
 		s.config.DataColumn,
 		s.config.VerColumn,
@@ -227,7 +227,7 @@ func (s *SQLXStore) Update(ctx context.Context, entity Entity) error {
 		s.config.VerColumn,
 	)
 
-	result, err := s.db.ExecContext(ctx, query, data, entity.Version(), entity.CacheKey(), entity.Version()-1)
+	result, err := s.db.ExecContext(ctx, query, data, entity.Version(), entity.CacheKey(), entity.Version())
 	if err != nil {
 		return err
 	}
@@ -303,9 +303,9 @@ func (s *SQLXStore) BatchUpdate(ctx context.Context, entities []Entity) error {
 	}
 	defer tx.Rollback()
 
-	// 与 Update 保持一致：entity.Version()-1 为旧版本，等值乐观锁
+	// 与 Update 保持一致：允许跨版本覆盖，阻止低版本覆盖高版本
 	query := fmt.Sprintf(
-		"UPDATE %s SET %s = ?, %s = ?, %s = 0 WHERE %s = ? AND %s = ?",
+		"UPDATE %s SET %s = ?, %s = ?, %s = 0 WHERE %s = ? AND %s < ?",
 		s.config.TableName,
 		s.config.DataColumn,
 		s.config.VerColumn,
@@ -325,7 +325,7 @@ func (s *SQLXStore) BatchUpdate(ctx context.Context, entities []Entity) error {
 		if err != nil {
 			return err
 		}
-		result, err := stmt.ExecContext(ctx, data, entity.Version(), entity.CacheKey(), entity.Version()-1)
+		result, err := stmt.ExecContext(ctx, data, entity.Version(), entity.CacheKey(), entity.Version())
 		if err != nil {
 			return err
 		}

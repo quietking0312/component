@@ -356,6 +356,7 @@ func (mc *MultiCache) setCacheAside(entity Entity) error {
 	if existing == nil {
 		err = mc.l3.Insert(ctx, entity)
 	} else {
+		entity.IncrementVersion()
 		err = mc.l3.Update(ctx, entity)
 	}
 

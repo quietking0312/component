@@ -84,6 +84,7 @@ func NewSimpleCache(entityType Entity, cfg *SimpleConfig) (*MultiCache, error) {
 			DefaultTTL: defaultRedisTTL,
 		}, entityType)
 		if err != nil {
+			dbStore.Close()
 			return nil, err
 		}
 		l2 = redisStore

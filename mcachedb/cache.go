@@ -313,6 +313,7 @@ func (c *Cache) setCacheAside(entity Entity) error {
 	if existing == nil {
 		err = c.store.Insert(ctx, entity)
 	} else {
+		entity.IncrementVersion()
 		err = c.store.Update(ctx, entity)
 	}
 
