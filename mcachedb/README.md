@@ -18,7 +18,7 @@ flowchart LR
 ```
 
 - **读路径**：L1 → L2 → L3，逐级穿透并自动回填上层缓存。
-- **写路径**：支持异步批量、同步直写、WriteThrough、CacheAside 四种模式。
+- **写路径**：支持异步批量、同步直写、CacheAside 三种模式，以及多级缓存专用的 WriteL2 模式。
 - **L2 容错**：Redis 故障自动降级为 L1 + L3，后台定时探测恢复。
 - **事务**：单缓存本地事务 + 跨缓存最大努力分布式事务。
 
@@ -140,7 +140,7 @@ cache, err := mcachedb.NewMultiCache(l3, l2, &mcachedb.MultiCacheConfig{
     L1MaxSize:      100_000,
     FlushInterval:  1 * time.Second,       // L1 -> L3 刷盘间隔
     SyncInterval:   500 * time.Millisecond, // L1 -> L2 同步间隔
-    WriteToL2OnSet: false,                  // Set 时是否同步写 L2
+    WriteMode:      mcachedb.WriteModeAsync,  // 默认：L2/L3 均异步；WriteModeWriteL2 可同步写 L2
 })
 if err != nil {
     panic(err)
@@ -239,7 +239,7 @@ sequenceDiagram
 |------|------|------|----------|
 | 异步（默认） | `WriteModeAsync` | 写 L1 返回，后台批量 flush L3，L2 定期 sync | 高吞吐、可接受秒级丢失 |
 | 同步 | `WriteModeSync` | 写 L1 同时同步写 L3 | 需要每次写都落库 |
-| 直写 | `WriteModeWriteThrough` | 先写 L3，成功后再写 L1 | 写少读多，L1 与 L3 强一致 |
+| 直写 | `WriteModeWriteL2` | 先写 L3，成功后再写 L1 | 写少读多，L1 与 L3 强一致 |
 | 旁路 | `WriteModeCacheAside` | 先写 L3，成功后删除 L1/L2；下次读回填 | 业务最常用的强一致模式 |
 
 ```go
@@ -250,7 +250,7 @@ cache, _ := mcachedb.NewMultiCache(l3, l2, &mcachedb.MultiCacheConfig{
 
 ### 异步模式的数据安全边界
 
-默认配置下，极端情况（进程崩溃）最多丢失 `FlushInterval` 内的数据。若不能容忍，请选择 `WriteModeSync`、`WriteModeWriteThrough` 或 `WriteModeCacheAside`，亦或在关键写后手动调用 `cache.Flush()`。
+默认配置下，极端情况（进程崩溃）最多丢失 `FlushInterval` 内的数据。若不能容忍，请选择 `WriteModeSync`、`WriteModeWriteL2` 或 `WriteModeCacheAside`，亦或在关键写后手动调用 `cache.Flush()`。
 
 ---
 
@@ -314,7 +314,7 @@ type RedisConfig struct {
 
 - L2 出现网络错误或超时后，自动标记 `l2Down`，读写跳过 L2 直通 L3。
 - 后台每 `30s` 探测一次，连续 `2` 次 `Ping` 成功后恢复 L2。
-- 默认 `WriteToL2OnSet: false`，L2 故障不会影响写成功率。
+- 默认 `WriteModeAsync`，L2 故障不会影响写成功率；`WriteModeWriteL2` 下 L2 写失败会回滚 L1。
 
 ---
 
@@ -503,9 +503,8 @@ func recordStats(name string, c *mcachedb.MultiCache) {
 |------|------------------|------|
 | `WriteModeAsync` | 5w ~ 15w | 写 L1 即返回，批量 flush |
 | `WriteModeSync` | 2k ~ 8k | 每次写同步落库 |
-| `WriteModeWriteThrough` | 2k ~ 8k | 先写库再写缓存 |
+| `WriteModeWriteL2` | 3w ~ 8w | 同步写 L2，L3 异步；性能有所下降 |
 | `WriteModeCacheAside` | 1k ~ 5k | 先写库再删缓存，读时回填 |
-| `WriteModeAsync + WriteToL2OnSet` | 3w ~ 8w | 同步写 L2，性能有所下降 |
 
 ### 命中率建议
 
@@ -567,7 +566,7 @@ type L2Store interface {
 | 配置/字典类强一致读 | `WriteModeCacheAside` |
 | 交易、充值、库存扣减 | `WriteModeCacheAside` + `DistTx.CommitAndFlush()`，或 `NewUltraReliabilityCache` |
 | 无 Redis，单机或单元测试 | `NewMultiCache(l3, nil, config)` |
-| 跨进程共享热数据 | `NewHighReliabilityCache`（`WriteToL2OnSet: true`） |
+| 跨进程共享热数据 | `NewHighReliabilityCache`（`WriteModeWriteL2`） |
 | 对接已有数据库/缓存 | 自定义 `DBStore` / `L2Store` |
 
 ---

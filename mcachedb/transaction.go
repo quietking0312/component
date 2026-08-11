@@ -25,10 +25,10 @@ type Tx struct {
 
 // txOp 事务操作
 type txOp struct {
-	typ    string // "set" | "delete"
-	key    string
-	entity Entity
-	old    Entity // 旧值，用于回滚
+	typ      string // "set" | "delete"
+	key      string
+	entity   Entity
+	oldEntry *entry // L1 旧 entry 快照（含 dirty 状态），nil 表示操作前 key 不在 L1
 }
 
 // Begin 开始事务
@@ -82,16 +82,11 @@ func (tx *Tx) Set(entity Entity) error {
 
 	key := entity.CacheKey()
 
-	// 保存旧值
-	old, _ := tx.cache.Get(key)
-
-	entity.IncrementVersion()
-
 	tx.opStack = append(tx.opStack, txOp{
-		typ:    "set",
-		key:    key,
-		entity: entity.Copy(),
-		old:    old,
+		typ:      "set",
+		key:      key,
+		entity:   entity.Copy(),
+		oldEntry: tx.snapshotL1(key),
 	})
 
 	return nil
@@ -106,16 +101,28 @@ func (tx *Tx) Delete(key string) error {
 		return fmt.Errorf("transaction already finished")
 	}
 
-	// 保存旧值
-	old, _ := tx.cache.Get(key)
-
 	tx.opStack = append(tx.opStack, txOp{
-		typ: "delete",
-		key: key,
-		old: old,
+		typ:      "delete",
+		key:      key,
+		oldEntry: tx.snapshotL1(key),
 	})
 
 	return nil
+}
+
+// snapshotL1 快照当前 key 在 L1 中的 entry（含 dirty 状态），key 不存在时返回 nil
+func (tx *Tx) snapshotL1(key string) *entry {
+	tx.cache.mu.RLock()
+	defer tx.cache.mu.RUnlock()
+	e, ok := tx.cache.data[key]
+	if !ok {
+		return nil
+	}
+	cloned := *e
+	if e.entity != nil {
+		cloned.entity = e.entity.Copy()
+	}
+	return &cloned
 }
 
 // Commit 提交事务
@@ -175,25 +182,21 @@ func (tx *Tx) Rollback() error {
 	return nil
 }
 
-// rollbackOps 回滚操作
+// rollbackOps 逆序回滚已执行的操作，恢复 L1 至操作前状态（含 dirty 标记）
 func (tx *Tx) rollbackOps(ops []txOp) {
-	// 逆序回滚
 	for i := len(ops) - 1; i >= 0; i-- {
 		op := ops[i]
-		if op.old != nil {
-			// 恢复旧值
-			tx.cache.mu.Lock()
-			tx.cache.data[op.key] = &entry{
-				entity:    op.old.Copy(),
-				createdAt: time.Now(),
-				dirty:     false,
-			}
-			tx.cache.mu.Unlock()
+		tx.cache.mu.Lock()
+		if op.oldEntry != nil {
+			tx.cache.data[op.key] = op.oldEntry
 		} else {
-			// 删除新添加的
-			tx.cache.mu.Lock()
 			delete(tx.cache.data, op.key)
-			tx.cache.mu.Unlock()
+		}
+		tx.cache.mu.Unlock()
+
+		// 若旧 entry 是脏数据，需重新加入 dirty 队列，确保最终能 flush 到 DB
+		if op.oldEntry != nil && op.oldEntry.dirty {
+			tx.cache.addDirty(op.key)
 		}
 	}
 }

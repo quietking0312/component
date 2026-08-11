@@ -42,10 +42,13 @@ type MultiCache struct {
 type MultiCacheConfig struct {
 	L1MaxSize         int
 	L1CleanupInterval time.Duration
-	WriteToL2OnSet    bool
 	SyncInterval      time.Duration
 	FlushInterval     time.Duration
-	WriteMode         WriteMode // L1 写入模式
+	// WriteMode 写入模式：
+	//   WriteModeAsync（默认）：写 L1，L2/L3 均由后台异步同步
+	//   WriteModeWriteL2：写 L1 同时同步写 L2，L3 仍由后台异步刷盘
+	//   WriteModeCacheAside：先写 L3，成功后删除 L1/L2 缓存
+	WriteMode WriteMode
 }
 
 // DefaultMultiCacheConfig 默认配置
@@ -53,7 +56,6 @@ func DefaultMultiCacheConfig() *MultiCacheConfig {
 	return &MultiCacheConfig{
 		L1MaxSize:         defaultMultiCacheL1MaxSize,
 		L1CleanupInterval: defaultMultiCacheL1CleanupInterval,
-		WriteToL2OnSet:    false,
 		SyncInterval:      defaultMultiCacheSyncInterval,
 		FlushInterval:     defaultMultiCacheFlushInterval,
 	}
@@ -320,18 +322,15 @@ func (mc *MultiCache) Set(entity Entity) error {
 		return err
 	}
 
-	// 可选：同步写入 L2
-	if mc.config.WriteToL2OnSet && mc.l2 != nil && !mc.isL2Down() {
+	// WriteModeWriteL2：同步写入 L2
+	if mc.config.WriteMode == WriteModeWriteL2 && mc.l2 != nil && !mc.isL2Down() {
 		ctx, cancel := context.WithTimeout(context.Background(), l2Timeout)
 		err := mc.l2.Set(ctx, entity)
 		cancel()
 		if err != nil {
-			// 策略1：回滚 L1 并返回错误（强一致）
-			mc.l1.Delete(entity.CacheKey())
+			// 用 Remove 而非 Delete：Delete 会标记 dirty+deleted，后续 flush 会把删除同步到 L3
+			mc.l1.Remove(entity.CacheKey())
 			return err
-
-			// 策略2：标记 L2 Down 并降级为 L1+L3（高可用）
-			// mc.markL2Down()
 		}
 		// 已经同步写 L2，不需要 syncToL2Loop 再搬运一次
 		mc.l1.clearL2Dirty(entity.CacheKey())

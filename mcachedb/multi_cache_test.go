@@ -317,16 +317,16 @@ func TestMultiCache_SetAndGet(t *testing.T) {
 	assert.GreaterOrEqual(t, dbStore.GetCallCount("BatchInsert"), 1)
 }
 
-// TestMultiCache_WriteToL2OnSet 测试写L1时同步写L2
-func TestMultiCache_WriteToL2OnSet(t *testing.T) {
+// TestMultiCache_WriteModeWriteL2 测试写L1时同步写L2
+func TestMultiCache_WriteModeWriteL2(t *testing.T) {
 	dbStore := NewMockDBStore()
 	l2Store := NewMockRedisStore()
 
 	config := &MultiCacheConfig{
-		L1MaxSize:      1000,
-		WriteToL2OnSet: true, // 关键：同步写L2
-		SyncInterval:   1 * time.Hour,
-		FlushInterval:  1 * time.Hour,
+		L1MaxSize:     1000,
+		WriteMode:     WriteModeWriteL2,
+		SyncInterval:  1 * time.Hour,
+		FlushInterval: 1 * time.Hour,
 	}
 
 	cache, err := NewMultiCache(dbStore, l2Store, config)

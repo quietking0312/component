@@ -73,12 +73,12 @@ type WriteMode int
 const (
 	// WriteModeAsync 异步写入（默认），写入缓存后立即返回，后台批量刷盘
 	WriteModeAsync WriteMode = iota
-	// WriteModeSync 同步写入，写入缓存同时写入数据库
+	// WriteModeSync 同步写入：以数据库为权威判断 Insert/Update，写 DB 成功后更新 L1（dirty:false，不触发二次 flush）
 	WriteModeSync
-	// WriteModeWriteThrough 直写模式，先写数据库成功后，再更新缓存
-	WriteModeWriteThrough
 	// WriteModeCacheAside 缓存旁路模式，先写数据库成功后，再删除缓存
 	WriteModeCacheAside
+	// WriteModeWriteL2 多级缓存专用：Set 时同步写 L1+L2，L3 由后台异步刷盘
+	WriteModeWriteL2
 )
 
 // FlushMode 刷新模式

@@ -2,6 +2,7 @@ package mcachedb
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"time"
 )
@@ -149,9 +150,13 @@ func NewGenericEntity[T any](key string, payload T) *GenericEntity[T] {
 // Copy 复制泛型实体
 func (e *GenericEntity[T]) Copy() Entity {
 	var payloadCopy T
-	data, _ := json.Marshal(e.Payload)
-	_ = json.Unmarshal(data, &payloadCopy)
-
+	data, err := json.Marshal(e.Payload)
+	if err != nil {
+		panic(fmt.Sprintf("GenericEntity.Copy marshal: %v", err))
+	}
+	if err = json.Unmarshal(data, &payloadCopy); err != nil {
+		panic(fmt.Sprintf("GenericEntity.Copy unmarshal: %v", err))
+	}
 	return &GenericEntity[T]{
 		BaseEntity: *e.BaseEntity.Copy(),
 		Payload:    payloadCopy,

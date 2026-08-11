@@ -69,10 +69,9 @@ func NewSimpleCache(entityType Entity, cfg *SimpleConfig) (*MultiCache, error) {
 	}
 
 	multiConfig := &MultiCacheConfig{
-		L1MaxSize:      l1Size,
-		SyncInterval:   syncInterval,
-		FlushInterval:  flushInterval,
-		WriteToL2OnSet: false,
+		L1MaxSize:     l1Size,
+		SyncInterval:  syncInterval,
+		FlushInterval: flushInterval,
 	}
 
 	var l2 L2Store
@@ -198,14 +197,15 @@ func NewHighReliabilityCache(db *sqlx.DB, redisAddr string, entityType Entity) (
 		DefaultTTL: defaultRedisTTL,
 	}, entityType)
 	if err != nil {
+		dbStore.Close()
 		return nil, err
 	}
 
 	cfg := &MultiCacheConfig{
-		L1MaxSize:      defaultMultiCacheL1MaxSize,
-		WriteToL2OnSet: true,
-		SyncInterval:   defaultMultiCacheSyncInterval,
-		FlushInterval:  defaultMultiCacheFlushInterval,
+		L1MaxSize:     defaultMultiCacheL1MaxSize,
+		WriteMode:     WriteModeWriteL2,
+		SyncInterval:  defaultMultiCacheSyncInterval,
+		FlushInterval: defaultMultiCacheFlushInterval,
 	}
 
 	return NewMultiCache(dbStore, redisStore, cfg)
@@ -223,14 +223,15 @@ func NewUltraReliabilityCache(db *sqlx.DB, redisAddr string, entityType Entity) 
 		DefaultTTL: defaultRedisTTL,
 	}, entityType)
 	if err != nil {
+		dbStore.Close()
 		return nil, err
 	}
 
 	cfg := &MultiCacheConfig{
-		L1MaxSize:      defaultMultiCacheL1MaxSize,
-		WriteToL2OnSet: true,
-		SyncInterval:   100 * time.Millisecond,
-		FlushInterval:  100 * time.Millisecond,
+		L1MaxSize:     defaultMultiCacheL1MaxSize,
+		WriteMode:     WriteModeWriteL2,
+		SyncInterval:  100 * time.Millisecond,
+		FlushInterval: 100 * time.Millisecond,
 	}
 
 	return NewMultiCache(dbStore, redisStore, cfg)

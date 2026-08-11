@@ -212,8 +212,6 @@ func (c *Cache) Set(entity Entity) error {
 	switch c.config.WriteMode {
 	case WriteModeSync:
 		return c.setSync(entity)
-	case WriteModeWriteThrough:
-		return c.setWriteThrough(entity)
 	case WriteModeCacheAside:
 		return c.setCacheAside(entity)
 	default: // WriteModeAsync
@@ -260,20 +258,19 @@ func (c *Cache) setAsync(entity Entity) error {
 	return nil
 }
 
-// setSync 同步写入
+// setSync 同步写入：以 DB 为权威判断 Insert/Update，写成功后更新 L1（dirty:false）
 func (c *Cache) setSync(entity Entity) error {
 	key := entity.CacheKey()
 
-	// 先写数据库
 	ctx, cancel := context.WithTimeout(context.Background(), defaultDBWriteTimeout)
 	defer cancel()
 
-	// 判断是插入还是更新
-	existing, _ := c.Get(key)
+	existing, _ := c.store.Get(ctx, entity.CacheKey())
 	var err error
 	if existing == nil {
 		err = c.store.Insert(ctx, entity)
 	} else {
+		entity.IncrementVersion()
 		err = c.store.Update(ctx, entity)
 	}
 
@@ -283,7 +280,6 @@ func (c *Cache) setSync(entity Entity) error {
 
 	atomic.AddInt64(&c.stats.DBWrites, 1)
 
-	// 更新缓存
 	c.mu.Lock()
 	c.data[key] = &entry{
 		entity:    entity.Copy(),
@@ -291,35 +287,13 @@ func (c *Cache) setSync(entity Entity) error {
 		expireAt:  c.getExpireTime(),
 		dirty:     false,
 		deleted:   false,
-		isNew:     false, // 同步写入后不再是新记录
+		isNew:     false,
 	}
 	c.mu.Unlock()
 
 	c.addL2Dirty(key)
 
 	return nil
-}
-
-// setWriteThrough 直写模式
-func (c *Cache) setWriteThrough(entity Entity) error {
-	ctx, cancel := context.WithTimeout(context.Background(), defaultDBWriteTimeout)
-	defer cancel()
-
-	// 先写数据库
-	var err error
-	existing, _ := c.store.Get(ctx, entity.CacheKey())
-	if existing == nil {
-		err = c.store.Insert(ctx, entity)
-	} else {
-		err = c.store.Update(ctx, entity)
-	}
-
-	if err != nil {
-		return err
-	}
-
-	// 成功后更新缓存
-	return c.setAsync(entity)
 }
 
 // setCacheAside 缓存旁路模式：先写数据库，成功后删除缓存
@@ -359,11 +333,7 @@ func (c *Cache) setCacheAside(entity Entity) error {
 // Delete 删除
 func (c *Cache) Delete(key string) error {
 	switch c.config.WriteMode {
-	case WriteModeSync:
-		return c.deleteSync(key)
-	case WriteModeWriteThrough:
-		return c.deleteWriteThrough(key)
-	case WriteModeCacheAside:
+	case WriteModeSync, WriteModeCacheAside:
 		return c.deleteCacheAside(key)
 	default:
 		return c.deleteAsync(key)
@@ -391,43 +361,7 @@ func (c *Cache) deleteAsync(key string) error {
 	return nil
 }
 
-// deleteSync 同步删除
-func (c *Cache) deleteSync(key string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := c.store.Delete(ctx, key); err != nil {
-		return err
-	}
-
-	atomic.AddInt64(&c.stats.DBWrites, 1)
-
-	c.mu.Lock()
-	delete(c.data, key)
-	c.mu.Unlock()
-
-	return nil
-}
-
-// deleteWriteThrough 直写删除
-func (c *Cache) deleteWriteThrough(key string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), defaultDBWriteTimeout)
-	defer cancel()
-
-	if err := c.store.Delete(ctx, key); err != nil {
-		return err
-	}
-
-	atomic.AddInt64(&c.stats.DBWrites, 1)
-
-	c.mu.Lock()
-	delete(c.data, key)
-	c.mu.Unlock()
-
-	return nil
-}
-
-// deleteCacheAside 缓存旁路删除：先删数据库，成功后删除缓存
+// deleteCacheAside 先删数据库，成功后删除 L1 缓存（WriteModeSync / WriteModeCacheAside 共用）
 func (c *Cache) deleteCacheAside(key string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultDBWriteTimeout)
 	defer cancel()
@@ -644,8 +578,7 @@ func (c *Cache) addL2Dirty(key string) {
 	}
 }
 
-// clearL2Dirty 从 L2 待同步队列中移除指定 key
-// 用于 WriteToL2OnSet 等已经同步写 L2 的场景，避免 syncToL2Loop 重复搬运
+// clearL2Dirty 从 L2 待同步队列中移除指定 key，避免 syncToL2Loop 重复搬运
 func (c *Cache) clearL2Dirty(key string) {
 	c.l2DirtyMu.Lock()
 	defer c.l2DirtyMu.Unlock()
