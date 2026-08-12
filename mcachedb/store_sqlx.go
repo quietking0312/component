@@ -91,7 +91,7 @@ func NewSQLXStore(dsn string, entityType Entity, configs ...*SQLXStoreConfig) (*
 }
 
 func (s *SQLXStore) createTable() error {
-	sql := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
+	formatSql := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
 		%s VARCHAR(%d) PRIMARY KEY,
 		%s JSON NOT NULL,
 		%s BIGINT DEFAULT 1,
@@ -111,7 +111,7 @@ func (s *SQLXStore) createTable() error {
 		s.config.DelColumn,
 	)
 
-	_, err := s.db.Exec(sql)
+	_, err := s.db.Exec(formatSql)
 	return err
 }
 
@@ -178,21 +178,21 @@ func (s *SQLXStore) MGet(ctx context.Context, keys []string) (map[string]Entity,
 	for rows.Next() {
 		dest := make(map[string]interface{})
 		if err := rows.MapScan(dest); err != nil {
-			continue
+			return entities, fmt.Errorf("scan row: %w", err)
 		}
 
 		keyVal, err := toBytes(dest[s.config.KeyColumn])
 		if err != nil {
-			continue
+			return entities, fmt.Errorf("read %s: %w", s.config.KeyColumn, err)
 		}
 		data, err := toBytes(dest[s.config.DataColumn])
 		if err != nil {
-			continue
+			return entities, fmt.Errorf("read %s: %w", s.config.DataColumn, err)
 		}
 
 		entity := s.entityType.Copy()
 		if err := json.Unmarshal(data, entity); err != nil {
-			continue
+			return entities, fmt.Errorf("unmarshal key %s: %w", string(keyVal), err)
 		}
 		entities[string(keyVal)] = entity
 	}
@@ -206,12 +206,15 @@ func (s *SQLXStore) Insert(ctx context.Context, entity Entity) error {
 		return err
 	}
 
+	// 使用 UPSERT 语义：若 key 已存在（如进程重启后 L1 清空导致 isNew 误判），
+	// 执行 UPDATE 而非报主键冲突，避免永久重试循环。
 	query := fmt.Sprintf(
-		"INSERT INTO %s (%s, %s, %s, %s) VALUES (?, ?, ?, 0)",
+		"INSERT INTO %s (%s, %s, %s, %s) VALUES (?, ?, ?, 0)"+
+			" ON DUPLICATE KEY UPDATE %s = VALUES(%s), %s = VALUES(%s), %s = 0",
 		s.config.TableName,
-		s.config.KeyColumn,
-		s.config.DataColumn,
-		s.config.VerColumn,
+		s.config.KeyColumn, s.config.DataColumn, s.config.VerColumn, s.config.DelColumn,
+		s.config.DataColumn, s.config.DataColumn,
+		s.config.VerColumn, s.config.VerColumn,
 		s.config.DelColumn,
 	)
 
@@ -274,12 +277,14 @@ func (s *SQLXStore) BatchInsert(ctx context.Context, entities []Entity) error {
 	}
 	defer tx.Rollback()
 
+	// 与 Insert 保持一致：使用 UPSERT 语义防止 isNew 误判时的主键冲突循环
 	query := fmt.Sprintf(
-		"INSERT INTO %s (%s, %s, %s, %s) VALUES (?, ?, ?, 0)",
+		"INSERT INTO %s (%s, %s, %s, %s) VALUES (?, ?, ?, 0)"+
+			" ON DUPLICATE KEY UPDATE %s = VALUES(%s), %s = VALUES(%s), %s = 0",
 		s.config.TableName,
-		s.config.KeyColumn,
-		s.config.DataColumn,
-		s.config.VerColumn,
+		s.config.KeyColumn, s.config.DataColumn, s.config.VerColumn, s.config.DelColumn,
+		s.config.DataColumn, s.config.DataColumn,
+		s.config.VerColumn, s.config.VerColumn,
 		s.config.DelColumn,
 	)
 
@@ -402,3 +407,118 @@ func (s *SQLXStore) CleanExpired(ctx context.Context, before time.Time) error {
 	_, err := s.db.ExecContext(ctx, query, before)
 	return err
 }
+
+// BeginTx 开启一个原生数据库事务，返回 DBStoreTx。
+// SQLXStore 实现 TxCapableDBStore 接口。
+func (s *SQLXStore) BeginTx(ctx context.Context) (DBStoreTx, error) {
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &SQLXStoreTx{tx: tx, config: s.config, entityType: s.entityType}, nil
+}
+
+// SQLXStoreTx 封装 sqlx.Tx，实现 DBStoreTx 接口。
+type SQLXStoreTx struct {
+	tx         *sqlx.Tx
+	config     *SQLXStoreConfig
+	entityType Entity
+}
+
+func (s *SQLXStoreTx) Get(ctx context.Context, key string) (Entity, error) {
+	query := fmt.Sprintf(
+		"SELECT %s, %s FROM %s WHERE %s = ? AND %s = 0",
+		s.config.DataColumn,
+		s.config.VerColumn,
+		s.config.TableName,
+		s.config.KeyColumn,
+		s.config.DelColumn,
+	)
+
+	row := s.tx.QueryRowxContext(ctx, query, key)
+	dest := make(map[string]interface{})
+	if err := row.MapScan(dest); err == sql.ErrNoRows {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+
+	data, err := toBytes(dest[s.config.DataColumn])
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", s.config.DataColumn, err)
+	}
+
+	entity := s.entityType.Copy()
+	if err := json.Unmarshal(data, entity); err != nil {
+		return nil, err
+	}
+	return entity, nil
+}
+
+func (s *SQLXStoreTx) Insert(ctx context.Context, entity Entity) error {
+	data, err := json.Marshal(entity)
+	if err != nil {
+		return err
+	}
+	query := fmt.Sprintf(
+		"INSERT INTO %s (%s, %s, %s, %s) VALUES (?, ?, ?, 0)"+
+			" ON DUPLICATE KEY UPDATE %s = VALUES(%s), %s = VALUES(%s), %s = 0",
+		s.config.TableName,
+		s.config.KeyColumn, s.config.DataColumn, s.config.VerColumn, s.config.DelColumn,
+		s.config.DataColumn, s.config.DataColumn,
+		s.config.VerColumn, s.config.VerColumn,
+		s.config.DelColumn,
+	)
+	_, err = s.tx.ExecContext(ctx, query, entity.CacheKey(), data, entity.Version())
+	return err
+}
+
+func (s *SQLXStoreTx) Update(ctx context.Context, entity Entity) error {
+	data, err := json.Marshal(entity)
+	if err != nil {
+		return err
+	}
+	query := fmt.Sprintf(
+		"UPDATE %s SET %s = ?, %s = ?, %s = 0 WHERE %s = ? AND %s < ?",
+		s.config.TableName,
+		s.config.DataColumn,
+		s.config.VerColumn,
+		s.config.DelColumn,
+		s.config.KeyColumn,
+		s.config.VerColumn,
+	)
+	result, err := s.tx.ExecContext(ctx, query, data, entity.Version(), entity.CacheKey(), entity.Version())
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return fmt.Errorf("optimistic lock conflict: key=%s version=%d", entity.CacheKey(), entity.Version())
+	}
+	return nil
+}
+
+func (s *SQLXStoreTx) Delete(ctx context.Context, key string) error {
+	query := fmt.Sprintf(
+		"UPDATE %s SET %s = 1 WHERE %s = ?",
+		s.config.TableName,
+		s.config.DelColumn,
+		s.config.KeyColumn,
+	)
+	_, err := s.tx.ExecContext(ctx, query, key)
+	return err
+}
+
+func (s *SQLXStoreTx) Commit() error {
+	return s.tx.Commit()
+}
+
+func (s *SQLXStoreTx) Rollback() error {
+	return s.tx.Rollback()
+}
+
+// 编译期检查：SQLXStore 实现 TxCapableDBStore
+var _ TxCapableDBStore = (*SQLXStore)(nil)

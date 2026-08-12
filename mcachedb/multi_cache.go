@@ -44,6 +44,9 @@ type MultiCacheConfig struct {
 	RetryCount int
 	// RetryInterval 重试间隔
 	RetryInterval time.Duration
+	// Logger 可选。注入后输出 flush 失败、L2 故障切换、L2 恢复等关键事件日志；
+	// 传 nil 则静默。
+	Logger Logger
 }
 
 // DefaultMultiCacheConfig 默认配置
@@ -102,7 +105,7 @@ type MultiCache struct {
 	dirtyKeys       []string
 	dirtyMap        map[string]bool
 	dirtySeqCounter uint64
-	flushing        int32
+	flushMu         sync.Mutex // 序列化 flush 执行，替代 CAS flushing 标志
 	flushCh         chan struct{}
 
 	// L2 同步追踪（upsert + delete）
@@ -119,6 +122,8 @@ type MultiCache struct {
 	l2Down              bool
 	l2RecoverySuccesses int
 	mu                  sync.RWMutex
+
+	logger Logger
 
 	// 生命周期
 	stopCh    chan struct{}
@@ -164,6 +169,11 @@ func NewMultiCache(dbStore DBStore, l2Store L2Store, config *MultiCacheConfig) (
 		return nil, err
 	}
 
+	logger := Logger(nopLogger{})
+	if config.Logger != nil {
+		logger = config.Logger
+	}
+
 	mc := &MultiCache{
 		l1:          l1,
 		l2:          l2Store,
@@ -174,6 +184,7 @@ func NewMultiCache(dbStore DBStore, l2Store L2Store, config *MultiCacheConfig) (
 		l2DeleteMap: make(map[string]bool),
 		flushCh:     make(chan struct{}, 1),
 		stopCh:      make(chan struct{}),
+		logger:      logger,
 	}
 
 	if l2Store != nil {
@@ -233,7 +244,9 @@ func (mc *MultiCache) Get(key string) (Entity, error) {
 	mc.l1.Load(entity)
 	if mc.l2 != nil && !mc.isL2Down() {
 		ctx, cancel = context.WithTimeout(context.Background(), l2Timeout)
-		mc.l2.Set(ctx, entity)
+		if err := mc.l2.Set(ctx, entity); err != nil {
+			mc.markL2Down()
+		}
 		cancel()
 	}
 	return entity, nil
@@ -320,7 +333,9 @@ func (mc *MultiCache) MGet(keys []string) (map[string]Entity, error) {
 			entities = append(entities, v)
 		}
 		ctx, cancel = context.WithTimeout(context.Background(), l2Timeout)
-		mc.l2.MSet(ctx, entities)
+		if err := mc.l2.MSet(ctx, entities); err != nil {
+			mc.markL2Down()
+		}
 		cancel()
 	}
 
@@ -346,7 +361,9 @@ func (mc *MultiCache) setAsync(entity Entity) error {
 	entity.IncrementVersion()
 
 	seq := atomic.AddUint64(&mc.dirtySeqCounter, 1)
-	mc.l1.setEntry(entity, seq)
+	if !mc.l1.setEntry(entity, seq) {
+		return fmt.Errorf("L1 cache is full, cannot write key %s", key)
+	}
 
 	mc.addDirty(key)
 	mc.addL2Upsert(key)
@@ -427,7 +444,7 @@ func (mc *MultiCache) Delete(key string) error {
 
 // ─── Flush ────────────────────────────────────────────────────────────────────
 
-// Flush 立即将 L1 脏数据刷盘到 L3
+// Flush 立即将 L1 脏数据刷盘到 L3，阻塞直到本次 flush 完成。
 func (mc *MultiCache) Flush() error {
 	return mc.doFlush()
 }
@@ -442,12 +459,26 @@ func (mc *MultiCache) SyncToL2() {
 	mc.syncToL2()
 }
 
+// doFlush 阻塞式刷盘：等待当前正在进行的 flush 完成后再执行。
+// 供公开 Flush() 和 Close() 调用，保证返回时数据已落盘。
 func (mc *MultiCache) doFlush() error {
-	if !atomic.CompareAndSwapInt32(&mc.flushing, 0, 1) {
+	mc.flushMu.Lock()
+	defer mc.flushMu.Unlock()
+	return mc.flush()
+}
+
+// tryFlush 非阻塞式刷盘：若已有 flush 在进行则跳过。
+// 供后台 goroutine 调用，避免因 flush 耗时过长导致 goroutine 堆积。
+func (mc *MultiCache) tryFlush() error {
+	if !mc.flushMu.TryLock() {
 		return nil
 	}
-	defer atomic.StoreInt32(&mc.flushing, 0)
+	defer mc.flushMu.Unlock()
+	return mc.flush()
+}
 
+// flush 实际刷盘逻辑，调用前须持有 flushMu。
+func (mc *MultiCache) flush() error {
 	snapshotSeq := atomic.LoadUint64(&mc.dirtySeqCounter)
 
 	mc.dirtyMu.Lock()
@@ -482,9 +513,13 @@ func (mc *MultiCache) doFlush() error {
 			time.Sleep(mc.config.RetryInterval)
 		}
 		if err != nil {
+			mc.logger.Errorf("mcachedb: BatchInsert failed after %d retries (count=%d): %v", mc.config.RetryCount, len(toInsert), err)
 			mc.handleFlushError(dirtyKeys)
 			return err
 		}
+		// BatchInsert 已落盘，立即清除 isNew 标记。
+		// 若随后 BatchUpdate 失败需要重入队，这批 key 将以 Update 路径重试，避免重复 Insert。
+		mc.l1.clearDirtyEntries(entityKeys(toInsert), snapshotSeq)
 	}
 
 	if len(toUpdate) > 0 {
@@ -496,12 +531,13 @@ func (mc *MultiCache) doFlush() error {
 			time.Sleep(mc.config.RetryInterval)
 		}
 		if err != nil {
-			mc.handleFlushError(dirtyKeys)
+			mc.logger.Errorf("mcachedb: BatchUpdate failed after %d retries (count=%d): %v", mc.config.RetryCount, len(toUpdate), err)
+			// 仅将 Update 失败的 key 重新入队；Insert 已成功，无需重入
+			mc.handleFlushError(entityKeys(toUpdate))
 			return err
 		}
+		mc.l1.clearDirtyEntries(entityKeys(toUpdate), snapshotSeq)
 	}
-
-	mc.l1.clearDirtyEntries(dirtyKeys, snapshotSeq)
 
 	duration := time.Since(startTime)
 	atomic.AddInt64(&mc.stats.FlushCount, 1)
@@ -511,6 +547,15 @@ func (mc *MultiCache) doFlush() error {
 	mc.statsMu.Unlock()
 
 	return nil
+}
+
+// entityKeys 提取实体列表中的 CacheKey
+func entityKeys(entities []Entity) []string {
+	keys := make([]string, len(entities))
+	for i, e := range entities {
+		keys[i] = e.CacheKey()
+	}
+	return keys
 }
 
 func (mc *MultiCache) handleFlushError(dirtyKeys []string) {
@@ -564,6 +609,8 @@ func (mc *MultiCache) addL2Upsert(key string) {
 		mc.l2DirtyMap[key] = true
 		mc.l2DirtyKeys = append(mc.l2DirtyKeys, key)
 	}
+	// 覆盖同窗口内先前的 Delete 操作，确保 Set 后 L2 执行 upsert 而非 delete
+	delete(mc.l2DeleteMap, key)
 }
 
 func (mc *MultiCache) addL2Delete(key string) {
@@ -628,11 +675,11 @@ func (mc *MultiCache) flushToL3Loop() {
 	for {
 		select {
 		case <-ticker.C:
-			mc.doFlush()
+			mc.tryFlush() // 后台定时触发：非阻塞，已在刷则跳过
 		case <-mc.flushCh:
-			mc.doFlush()
+			mc.tryFlush() // 批量阈值触发：同上
 		case <-mc.stopCh:
-			mc.doFlush()
+			mc.doFlush() // 关闭时：阻塞等待最终刷盘完成
 			return
 		}
 	}
@@ -647,6 +694,7 @@ func (mc *MultiCache) syncToL2Loop() {
 		case <-ticker.C:
 			mc.syncToL2()
 		case <-mc.stopCh:
+			mc.syncToL2() // 关闭时做最终同步，防止 L2 脏数据丢失
 			return
 		}
 	}
@@ -747,6 +795,9 @@ func (mc *MultiCache) isL2Down() bool {
 func (mc *MultiCache) markL2Down() {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
+	if !mc.l2Down {
+		mc.logger.Warnf("mcachedb: L2 store is down, falling back to L3-only mode")
+	}
 	mc.l2Down = true
 	mc.l2RecoverySuccesses = 0
 }
@@ -756,6 +807,7 @@ func (mc *MultiCache) resetL2Down() {
 	defer mc.mu.Unlock()
 	mc.l2Down = false
 	mc.l2RecoverySuccesses = 0
+	mc.logger.Warnf("mcachedb: L2 store recovered, resuming L2 sync")
 }
 
 // ─── 统计与生命周期 ───────────────────────────────────────────────────────────
@@ -783,12 +835,19 @@ func (mc *MultiCache) Stats() MultiCacheStats {
 	}
 }
 
-// Begin 创建事务（仅 WriteModeCacheAside 模式可用）
-func (mc *MultiCache) Begin() (*Tx, error) {
+// Transaction 在 CacheAside 事务中执行 fn（仅 WriteModeCacheAside 模式可用）。
+// fn 应通过 tx.Set / tx.Delete / tx.Get 登记操作。
+// fn 返回 nil 则提交，返回非 nil 则取消（L3 尚未写入，无需额外回滚）。
+func (mc *MultiCache) Transaction(fn func(*Tx) error) error {
 	if mc.config.WriteMode != WriteModeCacheAside {
-		return nil, fmt.Errorf("Tx requires WriteModeCacheAside; current mode: %d", mc.config.WriteMode)
+		return fmt.Errorf("Transaction requires WriteModeCacheAside; current mode: %d", mc.config.WriteMode)
 	}
-	return newTx(mc), nil
+	tx := newTx(mc)
+	defer tx.cancel()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.commit()
 }
 
 // Close 关闭缓存，最后刷盘

@@ -265,12 +265,10 @@ func BuyItemExample(goldCache, bagCache *MultiCache, uid int64, itemID int64, co
 	bagItem.Count += 1
 
 	// 3. 跨缓存事务提交
-	tx := NewDistTx()
-	if err := tx.AddSet(goldCache, gold); err != nil {
-		return err
-	}
-	if err := tx.AddSet(bagCache, bagItem); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return RunDistTx(func(dtx *DistTx) error {
+		if err := dtx.AddSet(goldCache, gold); err != nil {
+			return err
+		}
+		return dtx.AddSet(bagCache, bagItem)
+	})
 }

@@ -576,17 +576,25 @@ func TestDistTx_RollbackCacheAside(t *testing.T) {
 	assert.NoError(t, err)
 	defer cache.Close()
 
-	// 1. 注册新增操作后回滚：DB 不应出现该 key
-	tx := NewDistTx()
-	assert.NoError(t, tx.AddSet(cache, NewMockEntity("2", "new", 200)))
-	assert.NoError(t, tx.Rollback())
+	// 1. fn 返回错误时取消：DB 不应出现该 key
+	err = RunDistTx(func(dtx *DistTx) error {
+		if err := dtx.AddSet(cache, NewMockEntity("2", "new", 200)); err != nil {
+			return err
+		}
+		return errors.New("cancel")
+	})
+	assert.Error(t, err)
 	assert.Nil(t, dbStore.data["2"])
 	assert.Equal(t, 0, dbStore.GetCallCount("Insert"))
 
-	// 2. 注册更新操作后回滚：DB 保持原值
-	tx2 := NewDistTx()
-	assert.NoError(t, tx2.AddSet(cache, NewMockEntity("1", "updated", 999)))
-	assert.NoError(t, tx2.Rollback())
+	// 2. fn 返回错误时取消：DB 保持原值
+	err = RunDistTx(func(dtx *DistTx) error {
+		if err := dtx.AddSet(cache, NewMockEntity("1", "updated", 999)); err != nil {
+			return err
+		}
+		return errors.New("cancel")
+	})
+	assert.Error(t, err)
 	assert.Equal(t, "original", dbStore.data["1"].(*MockEntity).Name)
 	assert.Equal(t, 0, dbStore.GetCallCount("Update"))
 
@@ -594,10 +602,14 @@ func TestDistTx_RollbackCacheAside(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "original", entity.(*MockEntity).Name)
 
-	// 3. 注册删除操作后回滚：DB 保持原值
-	tx3 := NewDistTx()
-	assert.NoError(t, tx3.AddDelete(cache, "1"))
-	assert.NoError(t, tx3.Rollback())
+	// 3. fn 返回错误时取消：DB 保持原值
+	err = RunDistTx(func(dtx *DistTx) error {
+		if err := dtx.AddDelete(cache, "1"); err != nil {
+			return err
+		}
+		return errors.New("cancel")
+	})
+	assert.Error(t, err)
 	assert.NotNil(t, dbStore.data["1"])
 	assert.Equal(t, 0, dbStore.GetCallCount("Delete"))
 

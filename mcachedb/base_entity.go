@@ -123,16 +123,6 @@ func deepCopy(src interface{}) interface{} {
 	return reflect.ValueOf(dst).Elem().Interface()
 }
 
-// entityToJSON 实体转JSON
-func entityToJSON(entity Entity) ([]byte, error) {
-	return json.Marshal(entity)
-}
-
-// entityFromJSON JSON转实体
-func entityFromJSON(data []byte, entity Entity) error {
-	return json.Unmarshal(data, entity)
-}
-
 // GenericEntity 泛型实体
 type GenericEntity[T any] struct {
 	BaseEntity

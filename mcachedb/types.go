@@ -41,6 +41,24 @@ type DBStore interface {
 	Close() error
 }
 
+// DBStoreTx 表示一个已开启的 L3 原生事务。
+// 通过 TxCapableDBStore.BeginTx 获取，用完必须调用 Commit 或 Rollback。
+type DBStoreTx interface {
+	Get(ctx context.Context, key string) (Entity, error)
+	Insert(ctx context.Context, entity Entity) error
+	Update(ctx context.Context, entity Entity) error
+	Delete(ctx context.Context, key string) error
+	Commit() error
+	Rollback() error
+}
+
+// TxCapableDBStore 是可选接口：L3 实现若支持原生事务则嵌入 DBStore 并实现此接口。
+// MultiCache 在 Tx/DistTx Commit 时通过类型断言自动检测并使用原生事务。
+type TxCapableDBStore interface {
+	DBStore
+	BeginTx(ctx context.Context) (DBStoreTx, error)
+}
+
 // WriteMode 写入模式（MultiCache 使用）
 type WriteMode int
 
@@ -67,6 +85,22 @@ const (
 	defaultMaxCacheSize    = 100000
 	defaultCleanupInterval = 5 * time.Minute
 )
+
+// Logger 日志接口，供外部注入具体实现（zap、slog、zerolog 等均可适配）。
+// 仅覆盖关键事件：flush 失败、L2 故障切换、L2 恢复。
+// 传 nil 或不传则静默（nopLogger）。
+type Logger interface {
+	// Warnf 记录降级或恢复等值得关注但不影响正确性的事件
+	Warnf(format string, args ...any)
+	// Errorf 记录可能导致数据丢失的严重错误，如 flush 持续失败
+	Errorf(format string, args ...any)
+}
+
+// nopLogger 默认空实现，不输出任何日志
+type nopLogger struct{}
+
+func (nopLogger) Warnf(string, ...any)  {}
+func (nopLogger) Errorf(string, ...any) {}
 
 // DefaultConfig 返回默认 L1 配置
 func DefaultConfig() *Config {

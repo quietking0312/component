@@ -97,7 +97,7 @@ func (c *Cache) Set(entity Entity) bool {
 }
 
 // setEntry 写入实体并附带 dirty 追踪元数据，由 MultiCache 调用。
-// 返回 true 表示 key 之前不在缓存中（用于 isNew 判断）。
+// 返回 true 表示写入成功；返回 false 表示 L1 已达容量上限，写入被丢弃。
 // 注意：若已有条目标记为 isNew（首次写入且尚未 flush），新写入也保留 isNew=true。
 func (c *Cache) setEntry(entity Entity, seq uint64) bool {
 	key := entity.CacheKey()
@@ -120,7 +120,7 @@ func (c *Cache) setEntry(entity Entity, seq uint64) bool {
 		dirtySeq:  seq,
 		isNew:     !existed || preserveIsNew,
 	}
-	return !existed
+	return true
 }
 
 // Load 将外部（L2/L3）查询结果回填到 L1，不标记 dirty。
@@ -151,9 +151,7 @@ func (c *Cache) Load(entity Entity) {
 
 // Delete 从 L1 中直接移除 key（独立使用时调用）
 func (c *Cache) Delete(key string) {
-	c.mu.Lock()
-	delete(c.data, key)
-	c.mu.Unlock()
+	c.Remove(key)
 }
 
 // Remove 直接移除 key，不标记 dirty，也不触发持久化。

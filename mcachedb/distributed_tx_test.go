@@ -78,24 +78,35 @@ func InitUserData() {
 	_taskCache.Set(TaskEntity)
 }
 
-func TestNewDistTx(t *testing.T) {
+func TestRunDistTx(t *testing.T) {
 	InitUserData()
 	uid := 10001
 
-	tx := NewDistTx()
-	userEnv, _ := _userCache.Get(fmt.Sprintf("user:%d", uid))
-	user := userEnv.(*UserEntity)
-	user.Gid += 10
-	tx.AddSet(_userCache, user)
-	bagEnv, _ := _bagCache.Get(fmt.Sprintf("bag:%d:%d", uid, 1000))
-	bag := bagEnv.(*GenericEntity[*BagData])
-	bag.Payload.Count -= 5
-	tx.AddSet(_bagCache, bag)
-	taskEnv, _ := _taskCache.Get(fmt.Sprintf("task:%d:%d", uid, 100))
-	task := taskEnv.(*EntityWrapper)
-	task.Data.(*TaskData).ProcessId += 5
-	tx.AddSet(_taskCache, task)
-	if err := tx.Commit(); err != nil {
+	err := RunDistTx(func(dtx *DistTx) error {
+		userEnv, _ := _userCache.Get(fmt.Sprintf("user:%d", uid))
+		user := userEnv.(*UserEntity)
+		user.Gid += 10
+		if err := dtx.AddSet(_userCache, user); err != nil {
+			return err
+		}
+
+		bagEnv, _ := _bagCache.Get(fmt.Sprintf("bag:%d:%d", uid, 1000))
+		bag := bagEnv.(*GenericEntity[*BagData])
+		bag.Payload.Count -= 5
+		if err := dtx.AddSet(_bagCache, bag); err != nil {
+			return err
+		}
+
+		taskEnv, _ := _taskCache.Get(fmt.Sprintf("task:%d:%d", uid, 100))
+		task := taskEnv.(*EntityWrapper)
+		task.Data.(*TaskData).ProcessId += 5
+		if err := dtx.AddSet(_taskCache, task); err != nil {
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
 		t.Error(err)
 	}
 
@@ -104,5 +115,4 @@ func TestNewDistTx(t *testing.T) {
 	fmt.Println(newBag.(*GenericEntity[*BagData]).Payload)
 	newTask, _ := _taskCache.Get(fmt.Sprintf("task:%d:%d", uid, 100))
 	fmt.Println(newTask.(*EntityWrapper).Data)
-
 }
