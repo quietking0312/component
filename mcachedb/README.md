@@ -237,10 +237,10 @@ sequenceDiagram
 
 | 模式 | 常量 | 行为 | 适用场景 |
 |------|------|------|----------|
-| 异步（默认） | `WriteModeAsync` | 写 L1 返回，后台批量 flush L3，L2 定期 sync | 高吞吐、可接受秒级丢失 |
-| 同步 | `WriteModeSync` | 写 L1 同时同步写 L3 | 需要每次写都落库 |
-| 直写 | `WriteModeWriteL2` | 先写 L3，成功后再写 L1 | 写少读多，L1 与 L3 强一致 |
-| 旁路 | `WriteModeCacheAside` | 先写 L3，成功后删除 L1/L2；下次读回填 | 业务最常用的强一致模式 |
+| 异步（默认） | `WriteModeAsync` | 写 L1 返回，后台批量 flush L3，L2 定期 sync | 高吞吐写路径，单进程分区架构 |
+| 同步 | `WriteModeSync` | 写 L1 同时同步写 L3 | 需要每次写都立即落库 |
+| 直写 L2 | `WriteModeWriteL2` | 同步写 L1+L2，L3 后台异步；每次 Set 等待一次 Redis RTT | 低频写、需要跨进程共享的数据（在线状态、跨服排行等） |
+| 旁路 | `WriteModeCacheAside` | 先写 L3，成功后删除 L1/L2；下次读回填 | 强一致场景，如充值、道具到账 |
 
 ```go
 cache, _ := mcachedb.NewMultiCache(l3, l2, &mcachedb.MultiCacheConfig{
@@ -251,6 +251,16 @@ cache, _ := mcachedb.NewMultiCache(l3, l2, &mcachedb.MultiCacheConfig{
 ### 异步模式的数据安全边界
 
 默认配置下，极端情况（进程崩溃）最多丢失 `FlushInterval` 内的数据。若不能容忍，请选择 `WriteModeSync`、`WriteModeWriteL2` 或 `WriteModeCacheAside`，亦或在关键写后手动调用 `cache.Flush()`。
+
+### WriteModeWriteL2 的写频率限制
+
+`WriteModeWriteL2` 每次 `Set` 都会同步等待 Redis 响应（RTT 约 0.5~2ms），**不适合高频写路径**：
+
+- 单次逻辑操作若触发多个 `Set`，延迟直接叠加
+- Redis 故障时 `Set` 立即返回错误，业务需自行处理（`WriteModeAsync` 会自动降级，业务无感知）
+- 大量并发小包写入会加剧 Redis CPU 和连接池压力
+
+建议将 `WriteModeWriteL2` 限定在写频率较低（< 1000 次/s）、需要跨进程即时可见的数据上。高频写数据应使用 `WriteModeAsync`。
 
 ---
 
@@ -560,12 +570,36 @@ type L2Store interface {
 
 | 场景 | 推荐模式 / 函数 |
 |------|----------------|
-| 读多写少，允许秒级数据丢失 | `WriteModeAsync`（默认） |
-| 配置/字典类强一致读 | `WriteModeCacheAside` |
-| 交易、充值、库存扣减 | `WriteModeCacheAside` + `DistTx.CommitAndFlush()` |
+| 游戏服务器（单进程分区，玩家数据高频读写） | `WriteModeAsync` + 合理 `FlushInterval` |
+| 游戏服务器（跨服共享，低频更新：在线状态、公会、排行榜） | `WriteModeWriteL2`，仅用于写频率低的数据 |
+| 游戏服务器（充值、道具到账、库存扣减） | `WriteModeCacheAside` + `RunDistTx` + `TxCapableDBStore` |
+| Web 服务，读多写少，允许秒级数据丢失 | `WriteModeAsync`（默认） |
+| 配置 / 字典类强一致读 | `WriteModeCacheAside` |
+| 交易、账务类强一致写 | `WriteModeCacheAside` + `DistTx.CommitAndFlush()` |
 | 无 Redis，单机或单元测试 | `NewMultiCache(l3, nil, config)` |
-| 跨进程共享热数据 | `WriteModeWriteL2` + 较短 `FlushInterval` |
-| 对接已有数据库/缓存 | 自定义 `DBStore` / `L2Store` |
+| 对接已有数据库 / 缓存 | 自定义 `DBStore` / `L2Store` |
+
+### 游戏服务器多缓存分层示例
+
+按数据特性分别建立 `MultiCache`，避免用同一模式管理所有数据：
+
+```go
+// 战斗状态、坐标、HP：高频写，单进程独占 → Async，无需 L2
+combatCache, _ := mcachedb.NewMultiCache(l3, nil, &mcachedb.MultiCacheConfig{
+    WriteMode:     mcachedb.WriteModeAsync,
+    FlushInterval: 2 * time.Second,
+})
+
+// 玩家基础信息：跨服可见，低频写 → WriteL2
+profileCache, _ := mcachedb.NewMultiCache(l3, l2, &mcachedb.MultiCacheConfig{
+    WriteMode: mcachedb.WriteModeWriteL2,
+})
+
+// 充值、道具到账：强一致 → CacheAside
+tradeCache, _ := mcachedb.NewMultiCache(l3, l2, &mcachedb.MultiCacheConfig{
+    WriteMode: mcachedb.WriteModeCacheAside,
+})
+```
 
 ---
 
