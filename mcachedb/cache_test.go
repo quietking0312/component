@@ -1,8 +1,6 @@
 package mcachedb
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -11,291 +9,169 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// MockStore 内存存储实现
-type MockStore struct {
-	mu     sync.RWMutex
-	data   map[string]Entity
-	calls  map[string]int
-	getErr error
-}
-
-func NewMockStore() *MockStore {
-	return &MockStore{
-		data:  make(map[string]Entity),
-		calls: make(map[string]int),
-	}
-}
-
-func (m *MockStore) SetGetErr(err error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.getErr = err
-}
-
-func (m *MockStore) Get(ctx context.Context, key string) (Entity, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	m.calls["Get"]++
-	if m.getErr != nil {
-		return nil, m.getErr
-	}
-	if e, ok := m.data[key]; ok {
-		return e.Copy(), nil
-	}
-	return nil, nil
-}
-
-func (m *MockStore) MGet(ctx context.Context, keys []string) (map[string]Entity, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	m.calls["MGet"]++
-	result := make(map[string]Entity)
-	for _, key := range keys {
-		if e, ok := m.data[key]; ok {
-			result[key] = e.Copy()
-		}
-	}
-	return result, nil
-}
-
-func (m *MockStore) Insert(ctx context.Context, entity Entity) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.calls["Insert"]++
-	m.data[entity.CacheKey()] = entity.Copy()
-	return nil
-}
-
-func (m *MockStore) Update(ctx context.Context, entity Entity) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.calls["Update"]++
-	m.data[entity.CacheKey()] = entity.Copy()
-	return nil
-}
-
-func (m *MockStore) Delete(ctx context.Context, key string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.calls["Delete"]++
-	delete(m.data, key)
-	return nil
-}
-
-func (m *MockStore) BatchInsert(ctx context.Context, entities []Entity) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.calls["BatchInsert"]++
-	for _, e := range entities {
-		m.data[e.CacheKey()] = e.Copy()
-	}
-	return nil
-}
-
-func (m *MockStore) BatchUpdate(ctx context.Context, entities []Entity) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.calls["BatchUpdate"]++
-	for _, e := range entities {
-		m.data[e.CacheKey()] = e.Copy()
-	}
-	return nil
-}
-
-func (m *MockStore) BatchDelete(ctx context.Context, keys []string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.calls["BatchDelete"]++
-	for _, key := range keys {
-		delete(m.data, key)
-	}
-	return nil
-}
-
-func (m *MockStore) Close() error { return nil }
-
-func (m *MockStore) GetCallCount(method string) int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.calls[method]
-}
-
-func TestCache_AsyncWrite(t *testing.T) {
-	store := NewMockStore()
-	cache, _ := New(store, WithFlushInterval(100*time.Millisecond), WithBatchSize(10))
-	defer cache.Close()
-
+func TestCache_SetGet(t *testing.T) {
+	c, _ := New()
 	user := NewUser("1", "alice", "alice@test.com", 25)
-	cache.Set(user)
+	c.Set(user)
 
-	// 内存中立即有
-	entity, _ := cache.Get("1")
-	assert.NotNil(t, entity)
-
-	// 数据库还没有
-	assert.Equal(t, 0, store.GetCallCount("BatchInsert"))
-
-	// 等待刷新
-	time.Sleep(200 * time.Millisecond)
-	assert.GreaterOrEqual(t, store.GetCallCount("BatchInsert"), 1)
+	got, err := c.Get("1")
+	assert.NoError(t, err)
+	assert.NotNil(t, got)
+	assert.Equal(t, "alice", got.(*User).Username)
 }
 
-func TestCache_CacheHit(t *testing.T) {
-	store := NewMockStore()
-	cache, _ := New(store, WithFlushInterval(1*time.Second))
-	defer cache.Close()
+func TestCache_SetReturnsIsNew(t *testing.T) {
+	c, _ := New()
+	u := NewUser("1", "alice", "alice@test.com", 25)
+	assert.True(t, c.Set(u), "first Set should return isNew=true")
+	assert.False(t, c.Set(u), "second Set should return isNew=false")
+}
 
-	// 先放入存储，模拟数据库已有数据
-	user := NewUser("1", "alice", "alice@test.com", 25)
-	store.data["1"] = user
-
-	// 第一次读取，应该未命中，从数据库回填
-	cache.Get("1")
-
-	// 后续多次读取，应该命中缓存
-	for i := 0; i < 9; i++ {
-		cache.Get("1")
-	}
-
-	stats := cache.Stats()
-	assert.Equal(t, int64(9), stats.CacheHits)
-	assert.Equal(t, int64(1), stats.CacheMisses)
+func TestCache_GetMiss(t *testing.T) {
+	c, _ := New()
+	got, err := c.Get("missing")
+	assert.NoError(t, err)
+	assert.Nil(t, got)
 }
 
 func TestCache_Delete(t *testing.T) {
-	store := NewMockStore()
-	cache, _ := New(store, WithFlushInterval(100*time.Millisecond))
-	defer cache.Close()
+	c, _ := New()
+	u := NewUser("1", "alice", "alice@test.com", 25)
+	c.Set(u)
+	c.Delete("1")
 
-	user := NewUser("1", "alice", "alice@test.com", 25)
-	cache.Set(user)
-	cache.Delete("1")
-
-	entity, _ := cache.Get("1")
-	assert.Nil(t, entity)
+	got, _ := c.Get("1")
+	assert.Nil(t, got)
 }
 
 func TestCache_Load(t *testing.T) {
-	store := NewMockStore()
-	cache, _ := New(store, WithFlushInterval(100*time.Millisecond))
-	defer cache.Close()
+	c, _ := New()
+	u := NewUser("1", "alice", "alice@test.com", 25)
+	c.Load(u)
 
-	user := NewUser("1", "alice", "alice@test.com", 25)
-	cache.Load(user)
-
-	// Load 的数据可以命中
-	entity, err := cache.Get("1")
+	got, err := c.Get("1")
 	assert.NoError(t, err)
-	assert.NotNil(t, entity)
-	assert.Equal(t, "alice", entity.(*User).Username)
-
-	// Load 不标记 dirty，后台 flush 不应写入数据库
-	time.Sleep(200 * time.Millisecond)
-	assert.Equal(t, 0, store.GetCallCount("BatchInsert"))
-	assert.Equal(t, 0, store.GetCallCount("BatchUpdate"))
+	assert.NotNil(t, got)
+	assert.Equal(t, "alice", got.(*User).Username)
 }
 
-func TestCache_IsDeleted(t *testing.T) {
-	store := NewMockStore()
-	cache, _ := New(store, WithFlushInterval(1*time.Hour))
-	defer cache.Close()
+func TestCache_LoadVersionGuard(t *testing.T) {
+	c, _ := New()
+	u := NewUser("1", "alice", "alice@test.com", 25)
+	u.Ver = 5
+	c.Load(u)
 
-	user := NewUser("1", "alice", "alice@test.com", 25)
-	cache.Set(user)
+	// Load with older version should be rejected
+	older := NewUser("1", "stale", "stale@test.com", 99)
+	older.Ver = 3
+	c.Load(older)
 
-	assert.False(t, cache.IsDeleted("1"))
-
-	cache.Delete("1")
-	assert.True(t, cache.IsDeleted("1"))
-	assert.False(t, cache.IsDeleted("2"))
+	got, _ := c.Get("1")
+	assert.Equal(t, "alice", got.(*User).Username) // should still be alice
 }
 
-func TestCache_FlushConcurrentSet(t *testing.T) {
-	store := NewMockStore()
-	cache, _ := New(store, WithFlushInterval(50*time.Millisecond), WithBatchSize(1000))
-	defer cache.Close()
+func TestCache_LoadSkipsDirty(t *testing.T) {
+	c, _ := New()
+	u := NewUser("1", "dirty", "d@test.com", 1)
+	// Set via setEntry to mark dirty
+	c.setEntry(u, 1)
 
-	// 持续写入，与后台 flush 并发
+	// Load should not overwrite dirty entry
+	older := NewUser("1", "clean", "c@test.com", 2)
+	older.Ver = 2
+	c.Load(older)
+
+	// dirty entry has no entity version set by setEntry to 1 (BaseEntity.Ver starts at 1)
+	// The load has Ver=2 which is higher, but it's blocked by dirty flag
+	assert.True(t, c.IsDirty("1"))
+}
+
+func TestCache_Remove(t *testing.T) {
+	c, _ := New()
+	u := NewUser("1", "alice", "alice@test.com", 25)
+	c.Set(u)
+	c.Remove("1")
+
+	got, _ := c.Get("1")
+	assert.Nil(t, got)
+	assert.Equal(t, 0, c.Len())
+}
+
+func TestCache_Clear(t *testing.T) {
+	c, _ := New()
+	for i := 0; i < 5; i++ {
+		c.Set(NewUser(fmt.Sprintf("%d", i), "u", "u@test.com", i))
+	}
+	assert.Equal(t, 5, c.Len())
+	c.Clear()
+	assert.Equal(t, 0, c.Len())
+}
+
+func TestCache_MGet(t *testing.T) {
+	c, _ := New()
+	c.Set(NewUser("1", "alice", "alice@test.com", 25))
+	c.Set(NewUser("2", "bob", "bob@test.com", 30))
+
+	result, err := c.MGet([]string{"1", "2", "3"})
+	assert.NoError(t, err)
+	assert.Len(t, result, 2)
+	assert.Equal(t, "alice", result["1"].(*User).Username)
+	assert.Equal(t, "bob", result["2"].(*User).Username)
+	assert.Nil(t, result["3"])
+}
+
+func TestCache_Expiry(t *testing.T) {
+	c, _ := New(WithDefaultExpiration(50 * time.Millisecond))
+	c.Set(NewUser("1", "alice", "alice@test.com", 25))
+
+	got, _ := c.Get("1")
+	assert.NotNil(t, got)
+
+	time.Sleep(80 * time.Millisecond)
+	got, _ = c.Get("1")
+	assert.Nil(t, got)
+}
+
+func TestCache_Stats(t *testing.T) {
+	c, _ := New()
+	c.Set(NewUser("1", "alice", "alice@test.com", 25))
+	c.Get("1") // hit
+	c.Get("2") // miss
+
+	s := c.Stats()
+	assert.Equal(t, int64(1), s.CacheHits)
+	assert.Equal(t, int64(1), s.CacheMisses)
+	assert.Equal(t, 1, s.CacheSize)
+}
+
+func TestCache_MaxCacheSize(t *testing.T) {
+	c, _ := New(WithMaxCacheSize(3))
+	for i := 0; i < 5; i++ {
+		c.Set(NewUser(fmt.Sprintf("%d", i), "u", "u@test.com", i))
+	}
+	assert.LessOrEqual(t, c.Len(), 3)
+}
+
+func TestCache_CloseIdempotent(t *testing.T) {
+	c, _ := New()
+	assert.NotPanics(t, func() {
+		assert.NoError(t, c.Close())
+		assert.NoError(t, c.Close())
+	})
+}
+
+func TestCache_Concurrent(t *testing.T) {
+	c, _ := New()
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			user := NewUser(fmt.Sprintf("%d", n), "user", fmt.Sprintf("user%d@test.com", n), n)
-			cache.Set(user)
+			u := NewUser(fmt.Sprintf("%d", n%10), "u", "u@test.com", n)
+			c.Set(u)
+			c.Get(fmt.Sprintf("%d", n%10))
 		}(i)
 	}
 	wg.Wait()
-
-	// 等待 flush 完成
-	time.Sleep(300 * time.Millisecond)
-	cache.Flush()
-
-	// 所有写入都应落盘
-	for i := 0; i < 100; i++ {
-		key := fmt.Sprintf("%d", i)
-		assert.NotNil(t, store.data[key], "key %s should be persisted", key)
-	}
-}
-
-func TestCache_CacheAsideGetError(t *testing.T) {
-	store := NewMockStore()
-	cache, _ := New(store, WithWriteMode(WriteModeCacheAside))
-	defer cache.Close()
-
-	// 模拟 DB Get 失败
-	store.SetGetErr(errors.New("db error"))
-
-	user := NewUser("1", "alice", "alice@test.com", 25)
-	err := cache.Set(user)
-	assert.Error(t, err)
-	assert.Equal(t, 0, store.GetCallCount("Insert"))
-}
-
-func TestCache_CloseIdempotent(t *testing.T) {
-	store := NewMockStore()
-	cache, _ := New(store)
-
-	assert.NotPanics(t, func() {
-		assert.NoError(t, cache.Close())
-		assert.NoError(t, cache.Close())
-	})
-}
-
-func TestCache_CacheAsideWrite(t *testing.T) {
-	store := NewMockStore()
-	cache, _ := New(store, WithWriteMode(WriteModeCacheAside))
-	defer cache.Close()
-
-	user := NewUser("1", "alice", "alice@test.com", 25)
-
-	// 写入：先写数据库，然后删除本地缓存
-	err := cache.Set(user)
-	assert.NoError(t, err)
-	assert.Equal(t, 1, store.GetCallCount("Insert"))
-
-	// 缓存中应立即失效
-	entity, err := cache.Get("1")
-	assert.NoError(t, err)
-	assert.NotNil(t, entity) // Get 会触发从 DB 回填
-	assert.Equal(t, "alice", entity.(*User).Username)
-
-	// 数据库中存在
-	assert.NotNil(t, store.data["1"])
-
-	// 更新：应走 Update 而不是 Insert
-	user2 := NewUser("1", "bob", "bob@test.com", 30)
-	err = cache.Set(user2)
-	assert.NoError(t, err)
-	assert.Equal(t, 1, store.GetCallCount("Update"))
-
-	// 删除：先删数据库，再删缓存
-	err = cache.Delete("1")
-	assert.NoError(t, err)
-	assert.Equal(t, 1, store.GetCallCount("Delete"))
-	assert.Nil(t, store.data["1"])
-
-	entity, err = cache.Get("1")
-	assert.NoError(t, err)
-	assert.Nil(t, entity)
+	assert.LessOrEqual(t, c.Len(), 10)
 }

@@ -8,12 +8,15 @@ import (
 	"time"
 )
 
-// multiCache 默认与内部常量（不适合走配置文件）
+// MultiCache 内部常量
 const (
 	defaultMultiCacheL1MaxSize         = 100000
 	defaultMultiCacheL1CleanupInterval = 5 * time.Minute
 	defaultMultiCacheSyncInterval      = 500 * time.Millisecond
 	defaultMultiCacheFlushInterval     = 1 * time.Second
+	defaultMultiCacheBatchSize         = 100
+	defaultMultiCacheRetryCount        = 3
+	defaultMultiCacheRetryInterval     = 100 * time.Millisecond
 
 	l2Timeout                  = 1 * time.Second
 	l3Timeout                  = 5 * time.Second
@@ -21,22 +24,8 @@ const (
 	syncToL2BatchSize          = 100
 	l2RecoveryInterval         = 30 * time.Second
 	l2RecoverySuccessThreshold = 2
+	defaultFlushTimeout        = 30 * time.Second
 )
-
-// MultiCache 多级缓存 (L1内存 -> L2Redis -> L3数据库)
-type MultiCache struct {
-	l1                  *Cache  // 一级缓存：本地内存
-	l2                  L2Store // 二级缓存：Redis
-	l3                  DBStore // 三级存储：数据库
-	config              *MultiCacheConfig
-	stats               MultiCacheStats
-	stopCh              chan struct{}
-	wg                  sync.WaitGroup
-	closeOnce           sync.Once
-	mu                  sync.RWMutex
-	l2Down              bool
-	l2RecoverySuccesses int // 连续探测成功次数
-}
 
 // MultiCacheConfig 多级缓存配置
 type MultiCacheConfig struct {
@@ -46,9 +35,15 @@ type MultiCacheConfig struct {
 	FlushInterval     time.Duration
 	// WriteMode 写入模式：
 	//   WriteModeAsync（默认）：写 L1，L2/L3 均由后台异步同步
-	//   WriteModeWriteL2：写 L1 同时同步写 L2，L3 仍由后台异步刷盘
-	//   WriteModeCacheAside：先写 L3，成功后删除 L1/L2 缓存
+	//   WriteModeWriteL2：Set 时同步写 L1+L2，L3 后台异步刷盘
+	//   WriteModeCacheAside：先写 L3，成功后删除 L1/L2；下次读时回填
 	WriteMode WriteMode
+	// BatchSize 累积脏数据达到此数量时触发 flush
+	BatchSize int
+	// RetryCount flush 失败后重试次数
+	RetryCount int
+	// RetryInterval 重试间隔
+	RetryInterval time.Duration
 }
 
 // DefaultMultiCacheConfig 默认配置
@@ -58,10 +53,14 @@ func DefaultMultiCacheConfig() *MultiCacheConfig {
 		L1CleanupInterval: defaultMultiCacheL1CleanupInterval,
 		SyncInterval:      defaultMultiCacheSyncInterval,
 		FlushInterval:     defaultMultiCacheFlushInterval,
+		WriteMode:         WriteModeAsync,
+		BatchSize:         defaultMultiCacheBatchSize,
+		RetryCount:        defaultMultiCacheRetryCount,
+		RetryInterval:     defaultMultiCacheRetryInterval,
 	}
 }
 
-// MultiCacheStats 统计
+// MultiCacheStats 多级缓存统计
 type MultiCacheStats struct {
 	// 命中计数
 	L1Hits int64
@@ -69,13 +68,17 @@ type MultiCacheStats struct {
 	L3Hits int64
 	Misses int64
 
-	// 当前内存状态
-	L1Size       int   // L1 中当前存活的条目数（含未 flush 的脏数据）
-	L1DirtyCount int64 // 待 flush 到 L3 的脏条目数
-	L2DirtyCount int64 // 待同步到 L2 的条目数（自上次 syncToL2 以来新增的变更）
+	// L1 当前状态
+	L1Size       int
+	L1DirtyCount int64
+	L2DirtyCount int64
+	L2Down       bool
 
-	// L2 状态
-	L2Down bool // L2 当前是否处于降级状态
+	// 刷盘统计
+	FlushCount     int64
+	FlushErrors    int64
+	FlushTotalTime time.Duration
+	LastFlushTime  time.Time
 }
 
 // HitRate 总命中率
@@ -87,13 +90,40 @@ func (s *MultiCacheStats) HitRate() float64 {
 	return float64(s.L1Hits+s.L2Hits+s.L3Hits) / float64(total)
 }
 
-// L1HitRate L1 命中率
-func (s *MultiCacheStats) L1HitRate() float64 {
-	total := s.L1Hits + s.L2Hits + s.L3Hits + s.Misses
-	if total == 0 {
-		return 0
-	}
-	return float64(s.L1Hits) / float64(total)
+// MultiCache 多级缓存 (L1内存 → L2 Redis → L3 数据库)
+type MultiCache struct {
+	l1     *Cache
+	l2     L2Store
+	l3     DBStore
+	config *MultiCacheConfig
+
+	// L3 flush 追踪（仅 Set 操作产生，Delete 同步执行）
+	dirtyMu         sync.Mutex
+	dirtyKeys       []string
+	dirtyMap        map[string]bool
+	dirtySeqCounter uint64
+	flushing        int32
+	flushCh         chan struct{}
+
+	// L2 同步追踪（upsert + delete）
+	l2DirtyMu   sync.Mutex
+	l2DirtyKeys []string
+	l2DirtyMap  map[string]bool
+	l2DeleteMap map[string]bool
+
+	// 统计
+	stats   MultiCacheStats
+	statsMu sync.Mutex
+
+	// L2 健康状态
+	l2Down              bool
+	l2RecoverySuccesses int
+	mu                  sync.RWMutex
+
+	// 生命周期
+	stopCh    chan struct{}
+	wg        sync.WaitGroup
+	closeOnce sync.Once
 }
 
 // NewMultiCache 创建多级缓存
@@ -101,9 +131,11 @@ func NewMultiCache(dbStore DBStore, l2Store L2Store, config *MultiCacheConfig) (
 	if dbStore == nil {
 		return nil, fmt.Errorf("dbStore cannot be nil")
 	}
-
 	if config == nil {
 		config = DefaultMultiCacheConfig()
+	}
+	if config.L1MaxSize <= 0 {
+		config.L1MaxSize = defaultMultiCacheL1MaxSize
 	}
 	if config.SyncInterval <= 0 {
 		config.SyncInterval = defaultMultiCacheSyncInterval
@@ -114,18 +146,17 @@ func NewMultiCache(dbStore DBStore, l2Store L2Store, config *MultiCacheConfig) (
 	if config.L1CleanupInterval <= 0 {
 		config.L1CleanupInterval = defaultMultiCacheL1CleanupInterval
 	}
-
-	mc := &MultiCache{
-		l3:     dbStore,
-		l2:     l2Store,
-		config: config,
-		stopCh: make(chan struct{}),
+	if config.BatchSize <= 0 {
+		config.BatchSize = defaultMultiCacheBatchSize
+	}
+	if config.RetryCount <= 0 {
+		config.RetryCount = defaultMultiCacheRetryCount
+	}
+	if config.RetryInterval <= 0 {
+		config.RetryInterval = defaultMultiCacheRetryInterval
 	}
 
-	// 创建 L1 内存缓存（固定使用异步模式，写入策略由 MultiCache 层统一控制）
-	l1Store := &multiCacheStore{mc: mc}
-	var err error
-	mc.l1, err = New(l1Store,
+	l1, err := New(
 		WithMaxCacheSize(config.L1MaxSize),
 		WithCleanupInterval(config.L1CleanupInterval),
 	)
@@ -133,11 +164,21 @@ func NewMultiCache(dbStore DBStore, l2Store L2Store, config *MultiCacheConfig) (
 		return nil, err
 	}
 
-	// 启动后台协程
+	mc := &MultiCache{
+		l1:          l1,
+		l2:          l2Store,
+		l3:          dbStore,
+		config:      config,
+		dirtyMap:    make(map[string]bool),
+		l2DirtyMap:  make(map[string]bool),
+		l2DeleteMap: make(map[string]bool),
+		flushCh:     make(chan struct{}, 1),
+		stopCh:      make(chan struct{}),
+	}
+
 	if l2Store != nil {
 		mc.wg.Add(1)
 		go mc.syncToL2Loop()
-
 		mc.wg.Add(1)
 		go mc.l2RecoveryLoop()
 	}
@@ -148,7 +189,57 @@ func NewMultiCache(dbStore DBStore, l2Store L2Store, config *MultiCacheConfig) (
 	return mc, nil
 }
 
-// MGet 批量获取（L1 -> L2 -> L3），汇总返回
+// ─── 读路径 ───────────────────────────────────────────────────────────────────
+
+// Get 从 L1→L2→L3 获取实体，逐级回填
+func (mc *MultiCache) Get(key string) (Entity, error) {
+	// L1
+	entity, err := mc.l1.Get(key)
+	if err != nil {
+		return nil, err
+	}
+	if entity != nil {
+		atomic.AddInt64(&mc.stats.L1Hits, 1)
+		return entity, nil
+	}
+
+	// L2
+	if mc.l2 != nil && !mc.isL2Down() {
+		ctx, cancel := context.WithTimeout(context.Background(), l2Timeout)
+		entity, err = mc.l2.Get(ctx, key)
+		cancel()
+		if err != nil {
+			mc.markL2Down()
+		} else if entity != nil {
+			atomic.AddInt64(&mc.stats.L2Hits, 1)
+			mc.l1.Load(entity)
+			return entity, nil
+		}
+	}
+
+	// L3
+	ctx, cancel := context.WithTimeout(context.Background(), l3Timeout)
+	entity, err = mc.l3.Get(ctx, key)
+	cancel()
+	if err != nil {
+		return nil, err
+	}
+	if entity == nil {
+		atomic.AddInt64(&mc.stats.Misses, 1)
+		return nil, nil
+	}
+
+	atomic.AddInt64(&mc.stats.L3Hits, 1)
+	mc.l1.Load(entity)
+	if mc.l2 != nil && !mc.isL2Down() {
+		ctx, cancel = context.WithTimeout(context.Background(), l2Timeout)
+		mc.l2.Set(ctx, entity)
+		cancel()
+	}
+	return entity, nil
+}
+
+// MGet 批量获取，逐级回填
 func (mc *MultiCache) MGet(keys []string) (map[string]Entity, error) {
 	if len(keys) == 0 {
 		return make(map[string]Entity), nil
@@ -156,7 +247,7 @@ func (mc *MultiCache) MGet(keys []string) (map[string]Entity, error) {
 
 	result := make(map[string]Entity, len(keys))
 
-	// 1. 查 L1
+	// L1
 	l1Result, err := mc.l1.MGet(keys)
 	if err != nil {
 		return nil, err
@@ -166,14 +257,9 @@ func (mc *MultiCache) MGet(keys []string) (map[string]Entity, error) {
 		atomic.AddInt64(&mc.stats.L1Hits, 1)
 	}
 
-	// 收集 L1 miss
 	missKeys := make([]string, 0, len(keys))
 	for _, k := range keys {
 		if _, ok := result[k]; !ok {
-			// L1 中已标记删除但尚未 flush，不查询 L2/L3
-			if mc.l1.IsDeleted(k) {
-				continue
-			}
 			missKeys = append(missKeys, k)
 		}
 	}
@@ -181,25 +267,22 @@ func (mc *MultiCache) MGet(keys []string) (map[string]Entity, error) {
 		return result, nil
 	}
 
-	// 2. 查 L2 (Redis)
+	// L2
 	if mc.l2 != nil && !mc.isL2Down() {
 		ctx, cancel := context.WithTimeout(context.Background(), l2Timeout)
 		l2Result, err := mc.l2.MGet(ctx, missKeys)
 		cancel()
-
 		if err != nil {
 			mc.markL2Down()
 		} else {
 			for k, v := range l2Result {
 				result[k] = v
 				atomic.AddInt64(&mc.stats.L2Hits, 1)
-				// 回填 L1（不标记 dirty，避免 flush 时重复写 L3）
 				mc.l1.Load(v)
 			}
 		}
 	}
 
-	// 收集仍然 miss 的 keys
 	stillMiss := make([]string, 0, len(missKeys))
 	for _, k := range missKeys {
 		if _, ok := result[k]; !ok {
@@ -210,21 +293,14 @@ func (mc *MultiCache) MGet(keys []string) (map[string]Entity, error) {
 		return result, nil
 	}
 
-	// 3. 查 L3 (数据库)
+	// L3
 	ctx, cancel := context.WithTimeout(context.Background(), l3Timeout)
 	l3Result, err := mc.l3.MGet(ctx, stillMiss)
 	cancel()
-
 	if err != nil {
 		return result, err
 	}
 
-	if len(l3Result) == 0 {
-		atomic.AddInt64(&mc.stats.Misses, int64(len(stillMiss)))
-		return result, nil
-	}
-
-	// 计算实际 miss 数
 	missCount := 0
 	for _, k := range stillMiss {
 		if _, ok := l3Result[k]; !ok {
@@ -234,7 +310,6 @@ func (mc *MultiCache) MGet(keys []string) (map[string]Entity, error) {
 	atomic.AddInt64(&mc.stats.Misses, int64(missCount))
 	atomic.AddInt64(&mc.stats.L3Hits, int64(len(l3Result)))
 
-	// 回填 L1 和 L2
 	for k, v := range l3Result {
 		result[k] = v
 		mc.l1.Load(v)
@@ -244,7 +319,7 @@ func (mc *MultiCache) MGet(keys []string) (map[string]Entity, error) {
 		for _, v := range l3Result {
 			entities = append(entities, v)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), l2Timeout)
+		ctx, cancel = context.WithTimeout(context.Background(), l2Timeout)
 		mc.l2.MSet(ctx, entities)
 		cancel()
 	}
@@ -252,98 +327,49 @@ func (mc *MultiCache) MGet(keys []string) (map[string]Entity, error) {
 	return result, nil
 }
 
-// Get 获取（L1 -> L2 -> L3）
-func (mc *MultiCache) Get(key string) (Entity, error) {
-	// 1. 查 L1
-	entity, err := mc.l1.Get(key)
-	if err != nil {
-		return nil, err
-	}
-	if entity != nil {
-		atomic.AddInt64(&mc.stats.L1Hits, 1)
-		return entity, nil
-	}
+// ─── 写路径 ───────────────────────────────────────────────────────────────────
 
-	// L1 中已标记删除但尚未 flush，避免查询 L2/L3 并回填旧数据
-	if mc.l1.IsDeleted(key) {
-		return nil, nil
-	}
-
-	// 2. 查 L2 (Redis)
-	if mc.l2 != nil && !mc.isL2Down() {
-		ctx, cancel := context.WithTimeout(context.Background(), l2Timeout)
-		entity, err = mc.l2.Get(ctx, key)
-		cancel()
-
-		if err != nil {
-			mc.markL2Down()
-		} else if entity != nil {
-			atomic.AddInt64(&mc.stats.L2Hits, 1)
-			// 回填 L1（不标记 dirty）
-			mc.l1.Load(entity)
-			return entity, nil
-		}
-	}
-
-	// 3. 查 L3 (数据库)
-	ctx, cancel := context.WithTimeout(context.Background(), l3Timeout)
-	entity, err = mc.l3.Get(ctx, key)
-	cancel()
-
-	if err != nil {
-		return nil, err
-	}
-	if entity == nil {
-		atomic.AddInt64(&mc.stats.Misses, 1)
-		return nil, nil
-	}
-
-	atomic.AddInt64(&mc.stats.L3Hits, 1)
-
-	// 回填 L1 和 L2
-	mc.l1.Load(entity)
-	if mc.l2 != nil && !mc.isL2Down() {
-		ctx, cancel := context.WithTimeout(context.Background(), l2Timeout)
-		mc.l2.Set(ctx, entity)
-		cancel()
-	}
-
-	return entity, nil
-}
-
-// Set 设置
+// Set 写入实体
 func (mc *MultiCache) Set(entity Entity) error {
+	if err := validateEntity(entity); err != nil {
+		return err
+	}
 	if mc.config.WriteMode == WriteModeCacheAside {
 		return mc.setCacheAside(entity)
 	}
+	return mc.setAsync(entity)
+}
 
-	// 写入 L1
-	if err := mc.l1.Set(entity); err != nil {
-		return err
-	}
+// setAsync 写 L1（含 dirty 标记），后台异步同步 L2/L3
+func (mc *MultiCache) setAsync(entity Entity) error {
+	key := entity.CacheKey()
+	entity.IncrementVersion()
 
-	// WriteModeWriteL2：同步写入 L2
+	seq := atomic.AddUint64(&mc.dirtySeqCounter, 1)
+	mc.l1.setEntry(entity, seq)
+
+	mc.addDirty(key)
+	mc.addL2Upsert(key)
+
 	if mc.config.WriteMode == WriteModeWriteL2 && mc.l2 != nil && !mc.isL2Down() {
 		ctx, cancel := context.WithTimeout(context.Background(), l2Timeout)
 		err := mc.l2.Set(ctx, entity)
 		cancel()
 		if err != nil {
-			// 用 Remove 而非 Delete：Delete 会标记 dirty+deleted，后续 flush 会把删除同步到 L3
-			mc.l1.Remove(entity.CacheKey())
+			mc.markL2Down()
 			return err
 		}
-		// 已经同步写 L2，不需要 syncToL2Loop 再搬运一次
-		mc.l1.clearL2Dirty(entity.CacheKey())
+		// 已同步写 L2，不需要 syncToL2Loop 再搬运
+		mc.clearL2Upsert(key)
 	}
 
 	return nil
 }
 
-// setCacheAside 缓存旁路模式：先写数据库，成功后删除 L1/L2 缓存
+// setCacheAside 先写 L3，成功后删 L1/L2
 func (mc *MultiCache) setCacheAside(entity Entity) error {
 	key := entity.CacheKey()
 
-	// 判断是插入还是更新，必须先成功读到 L3 才能决定
 	ctx, cancel := context.WithTimeout(context.Background(), l3Timeout)
 	existing, err := mc.l3.Get(ctx, key)
 	cancel()
@@ -359,193 +385,263 @@ func (mc *MultiCache) setCacheAside(entity Entity) error {
 		entity.IncrementVersion()
 		err = mc.l3.Update(ctx, entity)
 	}
-
 	if err != nil {
 		return err
 	}
 
-	// 删除 L1 内存缓存（不标记脏数据，避免后续 flush 重复写 DB）
 	mc.l1.Remove(key)
-
-	// 删除 L2 Redis 缓存
 	if mc.l2 != nil && !mc.isL2Down() {
 		ctx2, cancel2 := context.WithTimeout(context.Background(), l2Timeout)
-		if err := mc.l2.Delete(ctx2, key); err != nil {
+		if err2 := mc.l2.Delete(ctx2, key); err2 != nil {
 			mc.markL2Down()
 		}
 		cancel2()
 	}
-
 	return nil
 }
 
-// Delete 删除
+// Delete 删除实体：先移除 L1，再同步删 L3，最后删 L2。
+// 先移除 L1 可防止在 L3 删除期间被重新回填；L3 同步执行保证其他节点立即可见。
 func (mc *MultiCache) Delete(key string) error {
-	if mc.config.WriteMode == WriteModeCacheAside {
-		return mc.deleteCacheAside(key)
-	}
-
-	if err := mc.l1.Delete(key); err != nil {
-		return err
-	}
-
-	if mc.l2 != nil && !mc.isL2Down() {
-		ctx, cancel := context.WithTimeout(context.Background(), l2Timeout)
-		mc.l2.Delete(ctx, key)
-		cancel()
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), l3Timeout)
-	defer cancel()
-	return mc.l3.Delete(ctx, key)
-}
-
-// deleteCacheAside 缓存旁路删除：先删数据库，再删 L1/L2
-func (mc *MultiCache) deleteCacheAside(key string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), l3Timeout)
-	if err := mc.l3.Delete(ctx, key); err != nil {
-		cancel()
-		return err
-	}
-	cancel()
-
-	// 直接清理 L1 内存，不标记脏数据
 	mc.l1.Remove(key)
+
+	ctx, cancel := context.WithTimeout(context.Background(), l3Timeout)
+	err := mc.l3.Delete(ctx, key)
+	cancel()
+	if err != nil {
+		return err
+	}
 
 	if mc.l2 != nil && !mc.isL2Down() {
 		ctx2, cancel2 := context.WithTimeout(context.Background(), l2Timeout)
-		if err := mc.l2.Delete(ctx2, key); err != nil {
+		if err2 := mc.l2.Delete(ctx2, key); err2 != nil {
 			mc.markL2Down()
+			mc.addL2Delete(key)
 		}
 		cancel2()
+	} else if mc.l2 != nil {
+		mc.addL2Delete(key)
 	}
-
 	return nil
 }
 
-// Flush 立即刷盘到数据库
+// ─── Flush ────────────────────────────────────────────────────────────────────
+
+// Flush 立即将 L1 脏数据刷盘到 L3
 func (mc *MultiCache) Flush() error {
-	return mc.l1.Flush()
+	return mc.doFlush()
 }
 
-// Stats 获取统计
-func (mc *MultiCache) Stats() MultiCacheStats {
-	l1Stats := mc.l1.Stats()
-	return MultiCacheStats{
-		L1Hits:       atomic.LoadInt64(&mc.stats.L1Hits),
-		L2Hits:       atomic.LoadInt64(&mc.stats.L2Hits),
-		L3Hits:       atomic.LoadInt64(&mc.stats.L3Hits),
-		Misses:       atomic.LoadInt64(&mc.stats.Misses),
-		L1Size:       l1Stats.CacheSize,
-		L1DirtyCount: l1Stats.DirtyCount,
-		L2DirtyCount: int64(mc.l1.L2DirtyCount()),
-		L2Down:       mc.isL2Down(),
-	}
+// FlushToL3 Flush 的别名
+func (mc *MultiCache) FlushToL3() error {
+	return mc.doFlush()
 }
 
-// SyncToL2 立即将 L1 中待同步的变更推送到 L2，不等待后台定时器
+// SyncToL2 立即将待同步变更推送到 L2
 func (mc *MultiCache) SyncToL2() {
 	mc.syncToL2()
 }
 
-// FlushToL3 立即将 L1 中所有脏数据刷盘到 L3，不等待后台定时器
-func (mc *MultiCache) FlushToL3() error {
-	return mc.l1.Flush()
-}
+func (mc *MultiCache) doFlush() error {
+	if !atomic.CompareAndSwapInt32(&mc.flushing, 0, 1) {
+		return nil
+	}
+	defer atomic.StoreInt32(&mc.flushing, 0)
 
-// Close 关闭
-func (mc *MultiCache) Close() error {
-	mc.closeOnce.Do(func() {
-		close(mc.stopCh)
-		mc.wg.Wait()
+	snapshotSeq := atomic.LoadUint64(&mc.dirtySeqCounter)
 
-		// 最后刷盘
-		mc.Flush()
+	mc.dirtyMu.Lock()
+	if len(mc.dirtyKeys) == 0 {
+		mc.dirtyMu.Unlock()
+		return nil
+	}
+	dirtyKeys := make([]string, len(mc.dirtyKeys))
+	copy(dirtyKeys, mc.dirtyKeys)
+	mc.dirtyKeys = mc.dirtyKeys[:0]
+	mc.dirtyMap = make(map[string]bool)
+	mc.dirtyMu.Unlock()
 
-		if mc.l2 != nil {
-			mc.l2.Close()
+	toInsert, toUpdate := mc.l1.getDirtyEntities(dirtyKeys)
+
+	if len(toInsert) == 0 && len(toUpdate) == 0 {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultFlushTimeout)
+	defer cancel()
+
+	startTime := time.Now()
+	var err error
+
+	if len(toInsert) > 0 {
+		for i := 0; i < mc.config.RetryCount; i++ {
+			err = mc.l3.BatchInsert(ctx, toInsert)
+			if err == nil {
+				break
+			}
+			time.Sleep(mc.config.RetryInterval)
 		}
-		mc.l3.Close()
-	})
+		if err != nil {
+			mc.handleFlushError(dirtyKeys)
+			return err
+		}
+	}
+
+	if len(toUpdate) > 0 {
+		for i := 0; i < mc.config.RetryCount; i++ {
+			err = mc.l3.BatchUpdate(ctx, toUpdate)
+			if err == nil {
+				break
+			}
+			time.Sleep(mc.config.RetryInterval)
+		}
+		if err != nil {
+			mc.handleFlushError(dirtyKeys)
+			return err
+		}
+	}
+
+	mc.l1.clearDirtyEntries(dirtyKeys, snapshotSeq)
+
+	duration := time.Since(startTime)
+	atomic.AddInt64(&mc.stats.FlushCount, 1)
+	mc.statsMu.Lock()
+	mc.stats.FlushTotalTime += duration
+	mc.stats.LastFlushTime = time.Now()
+	mc.statsMu.Unlock()
 
 	return nil
 }
 
-func (mc *MultiCache) isL2Down() bool {
-	mc.mu.RLock()
-	defer mc.mu.RUnlock()
-	return mc.l2Down
+func (mc *MultiCache) handleFlushError(dirtyKeys []string) {
+	atomic.AddInt64(&mc.stats.FlushErrors, 1)
+	mc.dirtyMu.Lock()
+	for _, key := range dirtyKeys {
+		if !mc.dirtyMap[key] {
+			mc.dirtyMap[key] = true
+			mc.dirtyKeys = append(mc.dirtyKeys, key)
+		}
+	}
+	mc.dirtyMu.Unlock()
 }
 
-func (mc *MultiCache) markL2Down() {
-	mc.mu.Lock()
-	defer mc.mu.Unlock()
-	mc.l2Down = true
-	mc.l2RecoverySuccesses = 0
+// ─── L3 脏数据队列 ─────────────────────────────────────────────────────────────
+
+func (mc *MultiCache) addDirty(key string) {
+	mc.dirtyMu.Lock()
+	if !mc.dirtyMap[key] {
+		mc.dirtyMap[key] = true
+		mc.dirtyKeys = append(mc.dirtyKeys, key)
+	}
+	needFlush := len(mc.dirtyKeys) >= mc.config.BatchSize
+	mc.dirtyMu.Unlock()
+
+	if needFlush {
+		mc.triggerFlush()
+	}
 }
 
-// resetL2Down 重置 L2 可用状态（由恢复探测调用）
-func (mc *MultiCache) resetL2Down() {
-	mc.mu.Lock()
-	defer mc.mu.Unlock()
-	mc.l2Down = false
-	mc.l2RecoverySuccesses = 0
+func (mc *MultiCache) triggerFlush() {
+	select {
+	case mc.flushCh <- struct{}{}:
+	default:
+	}
 }
 
-// l2RecoveryLoop L2 故障恢复探测循环
-func (mc *MultiCache) l2RecoveryLoop() {
+func (mc *MultiCache) dirtyCount() int {
+	mc.dirtyMu.Lock()
+	n := len(mc.dirtyKeys)
+	mc.dirtyMu.Unlock()
+	return n
+}
+
+// ─── L2 同步队列 ──────────────────────────────────────────────────────────────
+
+func (mc *MultiCache) addL2Upsert(key string) {
+	mc.l2DirtyMu.Lock()
+	defer mc.l2DirtyMu.Unlock()
+	if !mc.l2DirtyMap[key] {
+		mc.l2DirtyMap[key] = true
+		mc.l2DirtyKeys = append(mc.l2DirtyKeys, key)
+	}
+}
+
+func (mc *MultiCache) addL2Delete(key string) {
+	mc.l2DirtyMu.Lock()
+	defer mc.l2DirtyMu.Unlock()
+	if !mc.l2DirtyMap[key] {
+		mc.l2DirtyMap[key] = true
+		mc.l2DirtyKeys = append(mc.l2DirtyKeys, key)
+	}
+	mc.l2DeleteMap[key] = true
+}
+
+func (mc *MultiCache) clearL2Upsert(key string) {
+	mc.l2DirtyMu.Lock()
+	defer mc.l2DirtyMu.Unlock()
+	if !mc.l2DirtyMap[key] {
+		return
+	}
+	delete(mc.l2DirtyMap, key)
+	delete(mc.l2DeleteMap, key)
+	filtered := make([]string, 0, len(mc.l2DirtyKeys))
+	for _, k := range mc.l2DirtyKeys {
+		if k != key {
+			filtered = append(filtered, k)
+		}
+	}
+	mc.l2DirtyKeys = filtered
+}
+
+func (mc *MultiCache) pullL2DirtyKeys() (upsert, deletes []string) {
+	mc.l2DirtyMu.Lock()
+	defer mc.l2DirtyMu.Unlock()
+	if len(mc.l2DirtyKeys) == 0 {
+		return nil, nil
+	}
+	for _, k := range mc.l2DirtyKeys {
+		if mc.l2DeleteMap[k] {
+			deletes = append(deletes, k)
+		} else {
+			upsert = append(upsert, k)
+		}
+	}
+	mc.l2DirtyKeys = mc.l2DirtyKeys[:0]
+	mc.l2DirtyMap = make(map[string]bool)
+	mc.l2DeleteMap = make(map[string]bool)
+	return
+}
+
+func (mc *MultiCache) l2DirtyCount() int {
+	mc.l2DirtyMu.Lock()
+	n := len(mc.l2DirtyKeys)
+	mc.l2DirtyMu.Unlock()
+	return n
+}
+
+// ─── 后台 goroutine ───────────────────────────────────────────────────────────
+
+func (mc *MultiCache) flushToL3Loop() {
 	defer mc.wg.Done()
-
-	ticker := time.NewTicker(l2RecoveryInterval)
+	ticker := time.NewTicker(mc.config.FlushInterval)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ticker.C:
-			if mc.isL2Down() && mc.tryRecoverL2() {
-				mc.resetL2Down()
-			}
+			mc.doFlush()
+		case <-mc.flushCh:
+			mc.doFlush()
 		case <-mc.stopCh:
+			mc.doFlush()
 			return
 		}
 	}
 }
 
-// tryRecoverL2 尝试恢复 L2，连续成功阈值达到后返回 true
-func (mc *MultiCache) tryRecoverL2() bool {
-	if mc.l2 == nil {
-		return false
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), l2Timeout)
-	defer cancel()
-
-	if err := mc.l2.Ping(ctx); err != nil {
-		mc.mu.Lock()
-		mc.l2RecoverySuccesses = 0
-		mc.mu.Unlock()
-		return false
-	}
-
-	mc.mu.Lock()
-	mc.l2RecoverySuccesses++
-	successes := mc.l2RecoverySuccesses
-	if successes >= l2RecoverySuccessThreshold {
-		mc.l2Down = false
-		mc.l2RecoverySuccesses = 0
-	}
-	mc.mu.Unlock()
-
-	return successes >= l2RecoverySuccessThreshold
-}
-
-// syncToL2Loop 后台同步 L1 到 L2
 func (mc *MultiCache) syncToL2Loop() {
 	defer mc.wg.Done()
-
 	ticker := time.NewTicker(mc.config.SyncInterval)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ticker.C:
@@ -556,36 +652,25 @@ func (mc *MultiCache) syncToL2Loop() {
 	}
 }
 
-// syncToL2 将 L1 中发生变动的数据同步到 L2
 func (mc *MultiCache) syncToL2() {
 	if mc.l2 == nil || mc.isL2Down() {
 		return
 	}
-
-	// 只获取自上次同步以来有变动的 key
-	keys := mc.l1.pullL2DirtyKeys()
-	if len(keys) == 0 {
+	upsertKeys, deleteKeys := mc.pullL2DirtyKeys()
+	if len(upsertKeys) == 0 && len(deleteKeys) == 0 {
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), syncToL2Timeout)
 	defer cancel()
 
-	// 批量获取并写入 L2（已删除的 key 同步删除 L2）
 	batch := make([]Entity, 0, syncToL2BatchSize)
-	deleteKeys := make([]string, 0)
-	for _, key := range keys {
-		if mc.l1.IsDeleted(key) {
-			deleteKeys = append(deleteKeys, key)
-			continue
-		}
-
-		entity, err := mc.l1.Get(key)
-		if err != nil || entity == nil {
+	for _, key := range upsertKeys {
+		entity, _ := mc.l1.Get(key)
+		if entity == nil {
 			continue
 		}
 		batch = append(batch, entity)
-
 		if len(batch) >= syncToL2BatchSize {
 			if err := mc.l2.MSet(ctx, batch); err != nil {
 				mc.markL2Down()
@@ -594,7 +679,6 @@ func (mc *MultiCache) syncToL2() {
 			batch = batch[:0]
 		}
 	}
-
 	if len(batch) > 0 {
 		if err := mc.l2.MSet(ctx, batch); err != nil {
 			mc.markL2Down()
@@ -613,61 +697,111 @@ func (mc *MultiCache) syncToL2() {
 	}
 }
 
-// flushToL3Loop 后台刷盘到 L3
-func (mc *MultiCache) flushToL3Loop() {
+func (mc *MultiCache) l2RecoveryLoop() {
 	defer mc.wg.Done()
-
-	ticker := time.NewTicker(mc.config.FlushInterval)
+	ticker := time.NewTicker(l2RecoveryInterval)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ticker.C:
-			mc.l1.Flush()
+			if mc.isL2Down() && mc.tryRecoverL2() {
+				mc.resetL2Down()
+			}
 		case <-mc.stopCh:
-			mc.l1.Flush()
 			return
 		}
 	}
 }
 
-// multiCacheStore 是 L1 缓存的存储适配器
-type multiCacheStore struct {
-	mc *MultiCache
+func (mc *MultiCache) tryRecoverL2() bool {
+	if mc.l2 == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), l2Timeout)
+	defer cancel()
+	if err := mc.l2.Ping(ctx); err != nil {
+		mc.mu.Lock()
+		mc.l2RecoverySuccesses = 0
+		mc.mu.Unlock()
+		return false
+	}
+	mc.mu.Lock()
+	mc.l2RecoverySuccesses++
+	successes := mc.l2RecoverySuccesses
+	if successes >= l2RecoverySuccessThreshold {
+		mc.l2Down = false
+		mc.l2RecoverySuccesses = 0
+	}
+	mc.mu.Unlock()
+	return successes >= l2RecoverySuccessThreshold
 }
 
-func (s *multiCacheStore) Get(ctx context.Context, key string) (Entity, error) {
-	return nil, nil // L1 不从这读
+// ─── L2 健康状态 ──────────────────────────────────────────────────────────────
+
+func (mc *MultiCache) isL2Down() bool {
+	mc.mu.RLock()
+	defer mc.mu.RUnlock()
+	return mc.l2Down
 }
 
-func (s *multiCacheStore) MGet(ctx context.Context, keys []string) (map[string]Entity, error) {
-	return make(map[string]Entity), nil
+func (mc *MultiCache) markL2Down() {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	mc.l2Down = true
+	mc.l2RecoverySuccesses = 0
 }
 
-func (s *multiCacheStore) Insert(ctx context.Context, entity Entity) error {
-	return s.mc.l3.Insert(ctx, entity)
+func (mc *MultiCache) resetL2Down() {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	mc.l2Down = false
+	mc.l2RecoverySuccesses = 0
 }
 
-func (s *multiCacheStore) Update(ctx context.Context, entity Entity) error {
-	return s.mc.l3.Update(ctx, entity)
+// ─── 统计与生命周期 ───────────────────────────────────────────────────────────
+
+// Stats 返回命中统计及 L1/flush 状态
+func (mc *MultiCache) Stats() MultiCacheStats {
+	mc.statsMu.Lock()
+	flushTotalTime := mc.stats.FlushTotalTime
+	lastFlushTime := mc.stats.LastFlushTime
+	mc.statsMu.Unlock()
+
+	return MultiCacheStats{
+		L1Hits:         atomic.LoadInt64(&mc.stats.L1Hits),
+		L2Hits:         atomic.LoadInt64(&mc.stats.L2Hits),
+		L3Hits:         atomic.LoadInt64(&mc.stats.L3Hits),
+		Misses:         atomic.LoadInt64(&mc.stats.Misses),
+		L1Size:         mc.l1.Len(),
+		L1DirtyCount:   int64(mc.dirtyCount()),
+		L2DirtyCount:   int64(mc.l2DirtyCount()),
+		L2Down:         mc.isL2Down(),
+		FlushCount:     atomic.LoadInt64(&mc.stats.FlushCount),
+		FlushErrors:    atomic.LoadInt64(&mc.stats.FlushErrors),
+		FlushTotalTime: flushTotalTime,
+		LastFlushTime:  lastFlushTime,
+	}
 }
 
-func (s *multiCacheStore) Delete(ctx context.Context, key string) error {
-	return s.mc.l3.Delete(ctx, key)
+// Begin 创建事务（仅 WriteModeCacheAside 模式可用）
+func (mc *MultiCache) Begin() (*Tx, error) {
+	if mc.config.WriteMode != WriteModeCacheAside {
+		return nil, fmt.Errorf("Tx requires WriteModeCacheAside; current mode: %d", mc.config.WriteMode)
+	}
+	return newTx(mc), nil
 }
 
-func (s *multiCacheStore) BatchInsert(ctx context.Context, entities []Entity) error {
-	return s.mc.l3.BatchInsert(ctx, entities)
-}
-
-func (s *multiCacheStore) BatchUpdate(ctx context.Context, entities []Entity) error {
-	return s.mc.l3.BatchUpdate(ctx, entities)
-}
-
-func (s *multiCacheStore) BatchDelete(ctx context.Context, keys []string) error {
-	return s.mc.l3.BatchDelete(ctx, keys)
-}
-
-func (s *multiCacheStore) Close() error {
+// Close 关闭缓存，最后刷盘
+func (mc *MultiCache) Close() error {
+	mc.closeOnce.Do(func() {
+		close(mc.stopCh)
+		mc.wg.Wait()
+		mc.doFlush()
+		if mc.l2 != nil {
+			mc.l2.Close()
+		}
+		mc.l3.Close()
+		mc.l1.Close()
+	})
 	return nil
 }

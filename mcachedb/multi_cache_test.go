@@ -139,9 +139,7 @@ func (m *MockRedisStore) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-func (m *MockRedisStore) Close() error {
-	return nil
-}
+func (m *MockRedisStore) Close() error { return nil }
 
 // MockDBStore 模拟数据库存储
 type MockDBStore struct {
@@ -259,18 +257,17 @@ func (m *MockDBStore) BatchDelete(ctx context.Context, keys []string) error {
 
 func (m *MockDBStore) Close() error { return nil }
 
-// TestMultiCache_Basic 基础测试
+// ─── 测试 ─────────────────────────────────────────────────────────────────────
+
 func TestMultiCache_Basic(t *testing.T) {
 	dbStore := NewMockDBStore()
 	dbStore.data["1"] = NewMockEntity("1", "test", 100)
 
-	config := &MultiCacheConfig{
+	cache, err := NewMultiCache(dbStore, nil, &MultiCacheConfig{
 		L1MaxSize:     1000,
 		SyncInterval:  100 * time.Millisecond,
 		FlushInterval: 100 * time.Millisecond,
-	}
-
-	cache, err := NewMultiCache(dbStore, nil, config)
+	})
 	assert.NoError(t, err)
 	defer cache.Close()
 
@@ -290,22 +287,17 @@ func TestMultiCache_Basic(t *testing.T) {
 	assert.Equal(t, int64(1), stats.L1Hits)
 }
 
-// TestMultiCache_SetAndGet 测试写入和读取
 func TestMultiCache_SetAndGet(t *testing.T) {
 	dbStore := NewMockDBStore()
-
-	config := &MultiCacheConfig{
+	cache, err := NewMultiCache(dbStore, nil, &MultiCacheConfig{
 		L1MaxSize:     1000,
 		SyncInterval:  100 * time.Millisecond,
 		FlushInterval: 100 * time.Millisecond,
-	}
-
-	cache, err := NewMultiCache(dbStore, nil, config)
+	})
 	assert.NoError(t, err)
 	defer cache.Close()
 
-	entity := NewMockEntity("1", "alice", 100)
-	err = cache.Set(entity)
+	err = cache.Set(NewMockEntity("1", "alice", 100))
 	assert.NoError(t, err)
 
 	e, err := cache.Get("1")
@@ -313,28 +305,23 @@ func TestMultiCache_SetAndGet(t *testing.T) {
 	assert.Equal(t, "alice", e.(*MockEntity).Name)
 
 	time.Sleep(200 * time.Millisecond)
-
 	assert.GreaterOrEqual(t, dbStore.GetCallCount("BatchInsert"), 1)
 }
 
-// TestMultiCache_WriteModeWriteL2 测试写L1时同步写L2
 func TestMultiCache_WriteModeWriteL2(t *testing.T) {
 	dbStore := NewMockDBStore()
 	l2Store := NewMockRedisStore()
 
-	config := &MultiCacheConfig{
+	cache, err := NewMultiCache(dbStore, l2Store, &MultiCacheConfig{
 		L1MaxSize:     1000,
 		WriteMode:     WriteModeWriteL2,
 		SyncInterval:  1 * time.Hour,
 		FlushInterval: 1 * time.Hour,
-	}
-
-	cache, err := NewMultiCache(dbStore, l2Store, config)
+	})
 	assert.NoError(t, err)
 	defer cache.Close()
 
-	entity := NewMockEntity("1", "alice", 100)
-	err = cache.Set(entity)
+	err = cache.Set(NewMockEntity("1", "alice", 100))
 	assert.NoError(t, err)
 	assert.Equal(t, 1, l2Store.GetSetOps())
 
@@ -343,59 +330,50 @@ func TestMultiCache_WriteModeWriteL2(t *testing.T) {
 	assert.NotNil(t, got)
 	assert.Equal(t, "alice", got.(*MockEntity).Name)
 
-	// 手动触发 syncToL2，已同步写 L2 的 key 不应被重复搬运
+	// 已同步写 L2 的 key 不应被 syncToL2Loop 重复搬运
 	cache.syncToL2()
 	assert.Equal(t, 1, l2Store.GetSetOps())
 }
 
-// TestMultiCache_Delete 测试删除
 func TestMultiCache_Delete(t *testing.T) {
 	dbStore := NewMockDBStore()
 	dbStore.data["1"] = NewMockEntity("1", "test", 100)
 
-	config := &MultiCacheConfig{
+	cache, err := NewMultiCache(dbStore, nil, &MultiCacheConfig{
 		L1MaxSize:     1000,
 		SyncInterval:  100 * time.Millisecond,
 		FlushInterval: 100 * time.Millisecond,
-	}
-
-	cache, err := NewMultiCache(dbStore, nil, config)
+	})
 	assert.NoError(t, err)
 	defer cache.Close()
 
 	cache.Get("1")
-	time.Sleep(50 * time.Millisecond)
 
 	err = cache.Delete("1")
 	assert.NoError(t, err)
 
-	time.Sleep(200 * time.Millisecond)
+	// Delete 同步写 L3，无需等待 flush
+	assert.Nil(t, dbStore.data["1"])
 
-	_, ok := dbStore.data["1"]
-	assert.False(t, ok)
+	got, err := cache.Get("1")
+	assert.NoError(t, err)
+	assert.Nil(t, got)
 }
 
-// TestMultiCache_CacheAsideMode 缓存旁路模式（无 L2，重点验证 L1 失效与 L3 回填）
 func TestMultiCache_CacheAsideMode(t *testing.T) {
 	dbStore := NewMockDBStore()
-
-	config := &MultiCacheConfig{
+	cache, err := NewMultiCache(dbStore, nil, &MultiCacheConfig{
 		L1MaxSize:     1000,
 		SyncInterval:  1 * time.Hour,
 		FlushInterval: 1 * time.Hour,
 		WriteMode:     WriteModeCacheAside,
-	}
-
-	cache, err := NewMultiCache(dbStore, nil, config)
+	})
 	assert.NoError(t, err)
 	defer cache.Close()
 
-	// 写入新数据：应写 L3，并删除 L1
-	newEntity := NewMockEntity("1", "alice", 100)
-	err = cache.Set(newEntity)
+	// 写入新数据
+	err = cache.Set(NewMockEntity("1", "alice", 100))
 	assert.NoError(t, err)
-
-	// L3 已写入
 	assert.Equal(t, 1, dbStore.GetCallCount("Insert"))
 	assert.Equal(t, "alice", dbStore.data["1"].(*MockEntity).Name)
 
@@ -414,16 +392,14 @@ func TestMultiCache_CacheAsideMode(t *testing.T) {
 	l1Entity, err = cache.l1.Get("1")
 	assert.NoError(t, err)
 	assert.NotNil(t, l1Entity)
-	assert.Equal(t, "alice", l1Entity.(*MockEntity).Name)
 
-	// 更新：应走 Update 而不是 Insert
-	updatedEntity := NewMockEntity("1", "bob", 200)
-	err = cache.Set(updatedEntity)
+	// 更新：应走 Update
+	err = cache.Set(NewMockEntity("1", "bob", 200))
 	assert.NoError(t, err)
 	assert.Equal(t, 1, dbStore.GetCallCount("Update"))
 	assert.Equal(t, "bob", dbStore.data["1"].(*MockEntity).Name)
 
-	// 删除：数据库和 L1 都应被删除
+	// 删除
 	err = cache.Delete("1")
 	assert.NoError(t, err)
 	assert.Equal(t, 1, dbStore.GetCallCount("Delete"))
@@ -434,44 +410,36 @@ func TestMultiCache_CacheAsideMode(t *testing.T) {
 	assert.Nil(t, l1Entity)
 }
 
-// TestMultiCache_BackfillNotDirty 验证从 L3 回填 L1 时不会标记 dirty
 func TestMultiCache_BackfillNotDirty(t *testing.T) {
 	dbStore := NewMockDBStore()
 	dbStore.data["1"] = NewMockEntity("1", "alice", 100)
 
-	config := &MultiCacheConfig{
+	cache, err := NewMultiCache(dbStore, nil, &MultiCacheConfig{
 		L1MaxSize:     1000,
 		SyncInterval:  1 * time.Hour,
 		FlushInterval: 100 * time.Millisecond,
-	}
-
-	cache, err := NewMultiCache(dbStore, nil, config)
+	})
 	assert.NoError(t, err)
 	defer cache.Close()
 
-	// 从 L3 读取并回填 L1
 	entity, err := cache.Get("1")
 	assert.NoError(t, err)
 	assert.NotNil(t, entity)
 
-	// 等待 flush，回填数据不应触发 BatchInsert/BatchUpdate
+	// 从 L3 回填的数据不应触发 BatchInsert/BatchUpdate
 	time.Sleep(200 * time.Millisecond)
 	assert.Equal(t, 0, dbStore.GetCallCount("BatchInsert"))
 	assert.Equal(t, 0, dbStore.GetCallCount("BatchUpdate"))
 }
 
-// TestRedisStore_TypePreservation 验证 RedisStore 在配置 entityType 后可保持类型
 func TestRedisStore_TypePreservation(t *testing.T) {
 	prototype := NewMockEntity("", "", 0)
 	store := &RedisStore{entityType: prototype}
 
 	entity := NewMockEntity("1", "alice", 100)
-
-	// 序列化
 	data, err := entity.Marshal()
 	assert.NoError(t, err)
 
-	// 反序列化应保持具体类型
 	got, err := store.unmarshalEntity(data)
 	assert.NoError(t, err)
 	assert.IsType(t, &MockEntity{}, got)
@@ -479,56 +447,38 @@ func TestRedisStore_TypePreservation(t *testing.T) {
 	assert.Equal(t, 100, got.(*MockEntity).Value)
 }
 
-// TestMultiCache_PendingDeleteNotBackfilled 验证已标记删除但未 flush 的 key 不会被回填
 func TestMultiCache_PendingDeleteNotBackfilled(t *testing.T) {
 	dbStore := NewMockDBStore()
 	dbStore.data["1"] = NewMockEntity("1", "alice", 100)
 
-	config := &MultiCacheConfig{
+	cache, err := NewMultiCache(dbStore, nil, &MultiCacheConfig{
 		L1MaxSize:     1000,
 		SyncInterval:  1 * time.Hour,
-		FlushInterval: 100 * time.Millisecond,
-	}
-
-	cache, err := NewMultiCache(dbStore, nil, config)
+		FlushInterval: 1 * time.Hour,
+	})
 	assert.NoError(t, err)
 	defer cache.Close()
 
-	// 先读取，回填 L1
 	entity, err := cache.Get("1")
 	assert.NoError(t, err)
 	assert.NotNil(t, entity)
 
-	// 删除：L1 标记 deleted，L3 立即删除
+	// Delete 同步删 L3，不依赖 flush
 	err = cache.Delete("1")
 	assert.NoError(t, err)
 	assert.Nil(t, dbStore.data["1"])
 
-	// 在 flush 前再次读取，应因 L1 pending delete 而返回 nil，不会从 L3 回填旧数据
-	entity, err = cache.Get("1")
-	assert.NoError(t, err)
-	assert.Nil(t, entity)
-
-	// 等待 flush
-	time.Sleep(200 * time.Millisecond)
-
-	// L1 中的 deleted entry 被清理后，再次读取仍为 nil
+	// 删除后读取应返回 nil
 	entity, err = cache.Get("1")
 	assert.NoError(t, err)
 	assert.Nil(t, entity)
 }
 
-// TestMultiCache_L2Recovery 验证 L2 故障后可自动恢复
 func TestMultiCache_L2Recovery(t *testing.T) {
 	dbStore := NewMockDBStore()
 	l2Store := NewMockRedisStore()
 
-	config := &MultiCacheConfig{
-		L1MaxSize:     1000,
-		FlushInterval: 1 * time.Hour,
-	}
-
-	cache, err := NewMultiCache(dbStore, nil, config)
+	cache, err := NewMultiCache(dbStore, nil, &MultiCacheConfig{L1MaxSize: 1000, FlushInterval: 1 * time.Hour})
 	assert.NoError(t, err)
 	defer cache.Close()
 
@@ -536,13 +486,11 @@ func TestMultiCache_L2Recovery(t *testing.T) {
 	cache.markL2Down()
 	assert.True(t, cache.isL2Down())
 
-	// 第一次探测失败
 	l2Store.SetPingErr(errors.New("redis down"))
 	assert.False(t, cache.tryRecoverL2())
 	assert.True(t, cache.isL2Down())
 	assert.Equal(t, 1, l2Store.GetPingCalls())
 
-	// 连续两次探测成功后才恢复
 	l2Store.SetPingErr(nil)
 	assert.False(t, cache.tryRecoverL2())
 	assert.True(t, cache.isL2Down())
@@ -550,43 +498,36 @@ func TestMultiCache_L2Recovery(t *testing.T) {
 	assert.True(t, cache.tryRecoverL2())
 	assert.False(t, cache.isL2Down())
 
-	// 恢复后再次探测，状态保持可用
 	assert.False(t, cache.tryRecoverL2())
 	assert.False(t, cache.isL2Down())
 }
 
-// TestMultiCache_syncToL2Error 验证 L2 MSet 失败会标记 l2Down
 func TestMultiCache_syncToL2Error(t *testing.T) {
 	dbStore := NewMockDBStore()
 	l2Store := NewMockRedisStore()
 
-	config := &MultiCacheConfig{
+	cache, err := NewMultiCache(dbStore, nil, &MultiCacheConfig{
 		L1MaxSize:     1000,
 		SyncInterval:  1 * time.Hour,
 		FlushInterval: 1 * time.Hour,
-	}
-
-	cache, err := NewMultiCache(dbStore, nil, config)
+	})
 	assert.NoError(t, err)
 	defer cache.Close()
 
 	cache.l2 = l2Store
 
-	// 写入 L1，触发 L2 dirty
+	// 通过 MultiCache.Set 写入，这样才会标记 L2 dirty
 	entity := NewMockEntity("1", "alice", 100)
-	err = cache.l1.Set(entity)
+	err = cache.Set(entity)
 	assert.NoError(t, err)
 
-	// 模拟 L2 MSet 失败
 	l2Store.SetMSetErr(errors.New("redis error"))
 	assert.False(t, cache.isL2Down())
 
 	cache.syncToL2()
-
 	assert.True(t, cache.isL2Down())
 }
 
-// TestMultiCache_CloseIdempotent 验证 Close 可重复调用不 panic
 func TestMultiCache_CloseIdempotent(t *testing.T) {
 	dbStore := NewMockDBStore()
 	cache, err := NewMultiCache(dbStore, nil, nil)
@@ -598,17 +539,13 @@ func TestMultiCache_CloseIdempotent(t *testing.T) {
 	})
 }
 
-// TestMultiCache_Concurrent 并发测试
 func TestMultiCache_Concurrent(t *testing.T) {
 	dbStore := NewMockDBStore()
-
-	config := &MultiCacheConfig{
+	cache, err := NewMultiCache(dbStore, nil, &MultiCacheConfig{
 		L1MaxSize:     10000,
 		SyncInterval:  50 * time.Millisecond,
 		FlushInterval: 50 * time.Millisecond,
-	}
-
-	cache, err := NewMultiCache(dbStore, nil, config)
+	})
 	assert.NoError(t, err)
 	defer cache.Close()
 
@@ -617,46 +554,36 @@ func TestMultiCache_Concurrent(t *testing.T) {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			entity := NewMockEntity(
-				string(rune('0'+n%10)),
-				"user",
-				n,
-			)
-			cache.Set(entity)
+			cache.Set(NewMockEntity(string(rune('0'+n%10)), "user", n))
 		}(i)
 	}
 	wg.Wait()
 
 	time.Sleep(200 * time.Millisecond)
-
 	assert.GreaterOrEqual(t, len(dbStore.data), 10)
 }
 
-// TestDistTx_RollbackCacheAside 验证 CacheAside 模式下手动 Rollback 不会写数据库
 func TestDistTx_RollbackCacheAside(t *testing.T) {
 	dbStore := NewMockDBStore()
 	dbStore.data["1"] = NewMockEntity("1", "original", 100)
 
-	config := &MultiCacheConfig{
+	cache, err := NewMultiCache(dbStore, nil, &MultiCacheConfig{
 		L1MaxSize:     1000,
 		WriteMode:     WriteModeCacheAside,
 		SyncInterval:  1 * time.Hour,
 		FlushInterval: 1 * time.Hour,
-	}
-
-	cache, err := NewMultiCache(dbStore, nil, config)
+	})
 	assert.NoError(t, err)
 	defer cache.Close()
 
+	// 1. 注册新增操作后回滚：DB 不应出现该 key
 	tx := NewDistTx()
-
-	// 1. 注册新增操作，然后回滚：DB 不应出现该 key
 	assert.NoError(t, tx.AddSet(cache, NewMockEntity("2", "new", 200)))
 	assert.NoError(t, tx.Rollback())
 	assert.Nil(t, dbStore.data["2"])
 	assert.Equal(t, 0, dbStore.GetCallCount("Insert"))
 
-	// 2. 注册更新操作，然后回滚：DB 保持原值，缓存读到旧值
+	// 2. 注册更新操作后回滚：DB 保持原值
 	tx2 := NewDistTx()
 	assert.NoError(t, tx2.AddSet(cache, NewMockEntity("1", "updated", 999)))
 	assert.NoError(t, tx2.Rollback())
@@ -667,7 +594,7 @@ func TestDistTx_RollbackCacheAside(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "original", entity.(*MockEntity).Name)
 
-	// 3. 注册删除操作，然后回滚：DB 保持原值
+	// 3. 注册删除操作后回滚：DB 保持原值
 	tx3 := NewDistTx()
 	assert.NoError(t, tx3.AddDelete(cache, "1"))
 	assert.NoError(t, tx3.Rollback())

@@ -318,39 +318,37 @@ type RedisConfig struct {
 
 ---
 
-## 辅助构建器
+---
 
-### SimpleConfig
+## 创建缓存
 
 ```go
-cache, err := mcachedb.NewSimpleCache(&Player{}, &mcachedb.SimpleConfig{
-    DB:          db,
-    RedisAddr:   "127.0.0.1:6379",
-    RedisPrefix: "player:",
-    L1Size:      50_000,
+l3, err := mcachedb.NewSQLXStoreFromDB(db, &Player{})
+// 或带完整配置：mcachedb.NewSQLXStore(dsn, &Player{})
+
+l2, err := mcachedb.NewRedisStore(&mcachedb.RedisConfig{
+    Addr:       "127.0.0.1:6379",
+    KeyPrefix:  "player:",
+    DefaultTTL: 10 * time.Minute,
+}, &Player{})
+
+cache, err := mcachedb.NewMultiCache(l3, l2, &mcachedb.MultiCacheConfig{
+    L1MaxSize:     50_000,
+    FlushInterval: 1 * time.Second,
+    SyncInterval:  500 * time.Millisecond,
+    WriteMode:     mcachedb.WriteModeAsync, // 默认
 })
 ```
 
-### Builder 链式
+写 L1 同时同步写 L2（跨进程共享热数据）：
 
 ```go
-cache, err := mcachedb.NewCacheBuilder(db, &Player{}).
-    WithRedis("127.0.0.1:6379", "", 0).
-    WithRedisPrefix("player:").
-    WithL1Size(50_000).
-    WithFlushInterval(500 * time.Millisecond).
-    Build()
-```
-
-### 预设高可用模式
-
-```go
-// 写 L1 时同步写 L2，适合读多写少的共享缓存
-cache, err := mcachedb.NewHighReliabilityCache(db, "127.0.0.1:6379", &Player{})
-
-// 同上，且 flush 间隔缩短到 100ms，适合交易/充值等强一致场景
-cache, err := mcachedb.NewUltraReliabilityCache(db, "127.0.0.1:6379", &Player{})
-```
+cache, err := mcachedb.NewMultiCache(l3, l2, &mcachedb.MultiCacheConfig{
+    L1MaxSize:     50_000,
+    WriteMode:     mcachedb.WriteModeWriteL2,
+    FlushInterval: 100 * time.Millisecond,
+    SyncInterval:  100 * time.Millisecond,
+})
 
 ---
 
@@ -564,9 +562,9 @@ type L2Store interface {
 |------|----------------|
 | 读多写少，允许秒级数据丢失 | `WriteModeAsync`（默认） |
 | 配置/字典类强一致读 | `WriteModeCacheAside` |
-| 交易、充值、库存扣减 | `WriteModeCacheAside` + `DistTx.CommitAndFlush()`，或 `NewUltraReliabilityCache` |
+| 交易、充值、库存扣减 | `WriteModeCacheAside` + `DistTx.CommitAndFlush()` |
 | 无 Redis，单机或单元测试 | `NewMultiCache(l3, nil, config)` |
-| 跨进程共享热数据 | `NewHighReliabilityCache`（`WriteModeWriteL2`） |
+| 跨进程共享热数据 | `WriteModeWriteL2` + 较短 `FlushInterval` |
 | 对接已有数据库/缓存 | 自定义 `DBStore` / `L2Store` |
 
 ---

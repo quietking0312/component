@@ -125,21 +125,21 @@ func (s *SQLXStore) Get(ctx context.Context, key string) (Entity, error) {
 		s.config.DelColumn,
 	)
 
-	var result struct {
-		Data    []byte `db:"cache_data"`
-		Version int64  `db:"version"`
-	}
-
-	err := s.db.GetContext(ctx, &result, query, key)
-	if err == sql.ErrNoRows {
+	row := s.db.QueryRowxContext(ctx, query, key)
+	dest := make(map[string]interface{})
+	if err := row.MapScan(dest); err == sql.ErrNoRows {
 		return nil, nil
-	}
-	if err != nil {
+	} else if err != nil {
 		return nil, err
 	}
 
+	data, err := toBytes(dest[s.config.DataColumn])
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", s.config.DataColumn, err)
+	}
+
 	entity := s.entityType.Copy()
-	if err := json.Unmarshal(result.Data, entity); err != nil {
+	if err := json.Unmarshal(data, entity); err != nil {
 		return nil, err
 	}
 
@@ -168,26 +168,36 @@ func (s *SQLXStore) MGet(ctx context.Context, keys []string) (map[string]Entity,
 
 	query = s.db.Rebind(query)
 
-	var results []struct {
-		Key     string `db:"cache_key"`
-		Data    []byte `db:"cache_data"`
-		Version int64  `db:"version"`
-	}
-
-	if err := s.db.SelectContext(ctx, &results, query, args...); err != nil {
+	rows, err := s.db.QueryxContext(ctx, query, args...)
+	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 
 	entities := make(map[string]Entity)
-	for _, r := range results {
-		entity := s.entityType.Copy()
-		if err := json.Unmarshal(r.Data, entity); err != nil {
+	for rows.Next() {
+		dest := make(map[string]interface{})
+		if err := rows.MapScan(dest); err != nil {
 			continue
 		}
-		entities[r.Key] = entity
+
+		keyVal, err := toBytes(dest[s.config.KeyColumn])
+		if err != nil {
+			continue
+		}
+		data, err := toBytes(dest[s.config.DataColumn])
+		if err != nil {
+			continue
+		}
+
+		entity := s.entityType.Copy()
+		if err := json.Unmarshal(data, entity); err != nil {
+			continue
+		}
+		entities[string(keyVal)] = entity
 	}
 
-	return entities, nil
+	return entities, rows.Err()
 }
 
 func (s *SQLXStore) Insert(ctx context.Context, entity Entity) error {
@@ -365,6 +375,20 @@ func (s *SQLXStore) BatchDelete(ctx context.Context, keys []string) error {
 
 func (s *SQLXStore) Close() error {
 	return s.db.Close()
+}
+
+// toBytes 将 sqlx MapScan 返回的列值转换为 []byte
+func toBytes(v interface{}) ([]byte, error) {
+	switch val := v.(type) {
+	case []byte:
+		return val, nil
+	case string:
+		return []byte(val), nil
+	case nil:
+		return nil, fmt.Errorf("column value is nil")
+	default:
+		return nil, fmt.Errorf("unexpected column type %T", v)
+	}
 }
 
 // CleanExpired 清理过期（软删除）数据

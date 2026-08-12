@@ -100,12 +100,12 @@ func (o *Order) Unmarshal(data []byte) error {
 	return json.Unmarshal(data, o)
 }
 
-// CacheWithUser 带有用户实体类型的缓存
-func NewUserCache(store DBStore, opts ...Option) (*Cache, error) {
-	return New(store, opts...)
+// NewUserCache 创建纯内存 L1 用户缓存
+func NewUserCache(opts ...Option) (*Cache, error) {
+	return New(opts...)
 }
 
-// UserService 用户服务示例
+// UserService 用户服务示例（纯内存 L1）
 type UserService struct {
 	cache *Cache
 }
@@ -124,7 +124,6 @@ func (s *UserService) GetUser(userID string) (*User, error) {
 	if entity == nil {
 		return nil, nil
 	}
-
 	user, ok := entity.(*User)
 	if !ok {
 		return nil, fmt.Errorf("invalid user type")
@@ -132,21 +131,19 @@ func (s *UserService) GetUser(userID string) (*User, error) {
 	return user, nil
 }
 
-// SaveUser 保存用户
-func (s *UserService) SaveUser(user *User) error {
-	return s.cache.Set(user)
+// SaveUser 保存用户（纯内存写入）
+func (s *UserService) SaveUser(user *User) {
+	s.cache.Set(user)
 }
 
 // DeleteUser 删除用户
-func (s *UserService) DeleteUser(userID string) error {
-	return s.cache.Delete(userID)
+func (s *UserService) DeleteUser(userID string) {
+	s.cache.Delete(userID)
 }
 
-// BatchUpdateUsers 批量更新用户
-func (s *UserService) BatchUpdateUsers(users []*User) error {
-	pipe := s.cache.Pipeline()
+// BatchUpdateUsers 批量写入用户
+func (s *UserService) BatchUpdateUsers(users []*User) {
 	for _, user := range users {
-		pipe.Set(user)
+		s.cache.Set(user)
 	}
-	return pipe.Exec()
 }
