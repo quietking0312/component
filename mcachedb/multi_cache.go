@@ -129,6 +129,7 @@ type MultiCache struct {
 	stopCh    chan struct{}
 	wg        sync.WaitGroup
 	closeOnce sync.Once
+	closed    atomic.Bool
 }
 
 // NewMultiCache 创建多级缓存
@@ -346,6 +347,9 @@ func (mc *MultiCache) MGet(keys []string) (map[string]Entity, error) {
 
 // Set 写入实体
 func (mc *MultiCache) Set(entity Entity) error {
+	if mc.closed.Load() {
+		return fmt.Errorf("mcachedb: cache is closed")
+	}
 	if err := validateEntity(entity); err != nil {
 		return err
 	}
@@ -853,6 +857,7 @@ func (mc *MultiCache) Transaction(fn func(*Tx) error) error {
 // Close 关闭缓存，最后刷盘
 func (mc *MultiCache) Close() error {
 	mc.closeOnce.Do(func() {
+		mc.closed.Store(true)
 		close(mc.stopCh)
 		mc.wg.Wait()
 		mc.doFlush()
