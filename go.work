@@ -23,6 +23,7 @@ use (
 	./mds
 	./mmath
 	./mmen
+	./mmongo
 	./mpubsub
 	./mrand
 	./mredis

@@ -46,6 +46,7 @@ stages:
               mjwt mlog mmath mmen mpubsub mrand mredis
               mrpc msnowflake msock msql mssh mstorage
               mstore mtime mtimewheel mtool mutils mlb mlcok
+              mmongo
             )
 
             git config user.name "gitee-ci"
