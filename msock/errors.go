@@ -44,4 +44,7 @@ var (
 
 	// ErrNoAvailableConn 连接池中无可用连接
 	ErrNoAvailableConn = errors.New("no available connection in pool")
+
+	// ErrRPCNotEnabled RPC 未启用
+	ErrRPCNotEnabled = errors.New("rpc not enabled, call EnableRPC first")
 )

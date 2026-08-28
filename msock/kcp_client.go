@@ -18,9 +18,7 @@ func (c *kcpClientConn) readLoop() {
 			c.client.logger.Error(fmt.Sprintf("panic in client kcp readLoop: %v", r))
 		}
 		c.Close()
-		if c.client.handlers.onDisconnect != nil {
-			c.client.handlers.onDisconnect(c)
-		}
+		c.client.notifyDisconnect(c)
 	}()
 
 	codec := c.client.codec
@@ -64,7 +62,7 @@ func (c *kcpClientConn) readLoop() {
 				return
 			}
 
-			routeID, bodyLen, e := codec.DecodeHeader(header)
+			routeID, seq, bodyLen, e := codec.DecodeHeader(header)
 			if e != nil {
 				if c.client.handlers.onError != nil {
 					c.client.handlers.onError(e)
@@ -84,7 +82,7 @@ func (c *kcpClientConn) readLoop() {
 				}
 			}
 
-			msg, err = codec.DecodeBody(routeID, body)
+			msg, err = codec.DecodeBody(routeID, seq, body)
 			if bodyLen > 0 {
 				releaseBody(body)
 			}

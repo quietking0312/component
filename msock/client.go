@@ -52,6 +52,7 @@ type Client struct {
 	closeCh chan struct{}
 	wg      sync.WaitGroup
 	hbOnce  sync.Once
+	rpc     atomic.Pointer[rpcState]
 }
 
 // NewClient 创建客户端
@@ -297,6 +298,11 @@ func (c *Client) Send(msg Message) error {
 	if conn == nil {
 		return ErrNoAvailableConn
 	}
+	return c.sendOn(conn, msg)
+}
+
+// sendOn 编码并通过指定连接发送消息
+func (c *Client) sendOn(conn Conn, msg Message) error {
 	data, err := c.codec.Encode(msg)
 	if err != nil {
 		return err
@@ -395,6 +401,15 @@ func (c *Client) OnConnect(fn func(Conn)) {
 // OnDisconnect 设置连接断开回调
 func (c *Client) OnDisconnect(fn func(Conn)) {
 	c.handlers.onDisconnect = fn
+}
+
+// notifyDisconnect 连接断开时的统一入口：先让等待该连接响应的 RPC 调用立即返回错误，
+// 再触发业务的 OnDisconnect 回调，避免业务侧因连接断开（重启、掉线等）而白等到超时。
+func (c *Client) notifyDisconnect(conn Conn) {
+	c.failPendingRPC(conn, ErrConnClosed)
+	if c.handlers.onDisconnect != nil {
+		c.handlers.onDisconnect(conn)
+	}
 }
 
 // OnError 设置错误回调

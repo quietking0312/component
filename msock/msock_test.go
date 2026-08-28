@@ -289,21 +289,24 @@ func TestCodec_SimpleCodec(t *testing.T) {
 	codec := NewSimpleCodec()
 
 	msg := NewMessage(100, []byte("hello world"))
+	msg.SetSeq(42)
 
 	// 编码
 	data, err := codec.Encode(msg)
 	assert.NoError(t, err)
-	assert.Equal(t, 8+11, len(data))
+	assert.Equal(t, 12+11, len(data))
 
 	// 两阶段解码
-	routeID, bodyLen, err := codec.DecodeHeader(data[:codec.HeaderSize()])
+	routeID, seq, bodyLen, err := codec.DecodeHeader(data[:codec.HeaderSize()])
 	assert.NoError(t, err)
 	assert.Equal(t, uint32(100), routeID)
+	assert.Equal(t, uint32(42), seq)
 	assert.Equal(t, 11, bodyLen)
 
-	decoded, err := codec.DecodeBody(routeID, data[codec.HeaderSize():])
+	decoded, err := codec.DecodeBody(routeID, seq, data[codec.HeaderSize():])
 	assert.NoError(t, err)
 	assert.Equal(t, uint32(100), decoded.RouteID())
+	assert.Equal(t, uint32(42), decoded.Seq())
 	assert.Equal(t, "hello world", string(decoded.Data()))
 }
 
@@ -319,12 +322,13 @@ func TestCodec_TLVCodec(t *testing.T) {
 	assert.Equal(t, 3+4, len(data))
 
 	// 两阶段解码
-	routeID, bodyLen, err := codec.DecodeHeader(data[:codec.HeaderSize()])
+	routeID, seq, bodyLen, err := codec.DecodeHeader(data[:codec.HeaderSize()])
 	assert.NoError(t, err)
 	assert.Equal(t, uint32(5), routeID)
+	assert.Equal(t, uint32(0), seq)
 	assert.Equal(t, 4, bodyLen)
 
-	decoded, err := codec.DecodeBody(routeID, data[codec.HeaderSize():])
+	decoded, err := codec.DecodeBody(routeID, seq, data[codec.HeaderSize():])
 	assert.NoError(t, err)
 
 	tlvMsg, ok := decoded.(*TLVMessage)
@@ -546,8 +550,8 @@ func BenchmarkCodec_Decode(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		routeID, bodyLen, _ := codec.DecodeHeader(data[:hs])
-		codec.DecodeBody(routeID, data[hs:hs+bodyLen])
+		routeID, seq, bodyLen, _ := codec.DecodeHeader(data[:hs])
+		codec.DecodeBody(routeID, seq, data[hs:hs+bodyLen])
 	}
 }
 

@@ -19,9 +19,7 @@ func (c *wsClientConn) readLoop() {
 			c.client.logger.Error(fmt.Sprintf("panic in client ws readLoop: %v", r))
 		}
 		c.Close()
-		if c.client.handlers.onDisconnect != nil {
-			c.client.handlers.onDisconnect(c)
-		}
+		c.client.notifyDisconnect(c)
 	}()
 
 	for {
@@ -62,7 +60,7 @@ func (c *wsClientConn) handleBinaryMessage(data []byte) {
 			}
 			return
 		}
-		routeID, bodyLen, err := codec.DecodeHeader(data[:headerSize])
+		routeID, seq, bodyLen, err := codec.DecodeHeader(data[:headerSize])
 		if err != nil {
 			if c.client.handlers.onError != nil {
 				c.client.handlers.onError(err)
@@ -76,7 +74,7 @@ func (c *wsClientConn) handleBinaryMessage(data []byte) {
 			}
 			return
 		}
-		msg, err := codec.DecodeBody(routeID, data[headerSize:end])
+		msg, err := codec.DecodeBody(routeID, seq, data[headerSize:end])
 		if err != nil {
 			if c.client.handlers.onError != nil {
 				c.client.handlers.onError(err)

@@ -152,7 +152,7 @@ func (c *tcpConn) readLoop() {
 				return
 			}
 
-			routeID, bodyLen, err := codec.DecodeHeader(header)
+			routeID, seq, bodyLen, err := codec.DecodeHeader(header)
 			if err != nil {
 				c.server.logger.Error(fmt.Sprintf("decode header error: %v", err))
 				return
@@ -171,7 +171,7 @@ func (c *tcpConn) readLoop() {
 				}
 			}
 
-			msg, err = codec.DecodeBody(routeID, body)
+			msg, err = codec.DecodeBody(routeID, seq, body)
 			if bodyLen > 0 {
 				releaseBody(body)
 			}

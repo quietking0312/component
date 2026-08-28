@@ -22,6 +22,11 @@ const (
 type Message interface {
 	// RouteID 返回路由ID，用于消息路由
 	RouteID() uint32
+	// Seq 返回序列号，可用于请求/响应关联、链路追踪等场景。
+	// 是否在网络字节中传输由具体 Codec 决定（例如 SimpleCodec 支持，TLVCodec/LineCodec 不支持，恒为 0）。
+	Seq() uint32
+	// SetSeq 设置序列号
+	SetSeq(seq uint32)
 	// Data 返回消息数据
 	Data() []byte
 	// SetData 设置消息数据
@@ -64,10 +69,10 @@ type Codec interface {
 	Encode(msg Message) ([]byte, error)
 	// HeaderSize 返回固定 header 字节数
 	HeaderSize() int
-	// DecodeHeader 解析 header，返回 routeID 和 body 长度
-	DecodeHeader(header []byte) (routeID uint32, bodyLen int, err error)
+	// DecodeHeader 解析 header，返回 routeID、seq 和 body 长度
+	DecodeHeader(header []byte) (routeID uint32, seq uint32, bodyLen int, err error)
 	// DecodeBody 将 body 字节解析为消息
-	DecodeBody(routeID uint32, body []byte) (Message, error)
+	DecodeBody(routeID uint32, seq uint32, body []byte) (Message, error)
 	// MaxPacketSize 返回允许的最大包大小（header + body）
 	MaxPacketSize() int
 }

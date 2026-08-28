@@ -214,7 +214,7 @@ func (c *wsConn) handleBinaryMessage(data []byte) {
 			c.server.logger.Error(fmt.Sprintf("ws frame too short: %d < %d", len(data), headerSize))
 			return
 		}
-		routeID, bodyLen, err := codec.DecodeHeader(data[:headerSize])
+		routeID, seq, bodyLen, err := codec.DecodeHeader(data[:headerSize])
 		if err != nil {
 			c.server.logger.Error(fmt.Sprintf("decode header error: %v", err))
 			return
@@ -224,7 +224,7 @@ func (c *wsConn) handleBinaryMessage(data []byte) {
 			c.server.logger.Error(fmt.Sprintf("ws frame incomplete: need %d, have %d", end, len(data)))
 			return
 		}
-		msg, err := codec.DecodeBody(routeID, data[headerSize:end])
+		msg, err := codec.DecodeBody(routeID, seq, data[headerSize:end])
 		if err != nil {
 			c.server.logger.Error(fmt.Sprintf("decode body error: %v", err))
 			return

@@ -9,6 +9,7 @@ import (
 // DefaultMessage 默认消息实现
 type DefaultMessage struct {
 	routeID uint32
+	seq     uint32
 	data    []byte
 }
 
@@ -23,6 +24,16 @@ func NewMessage(routeID uint32, data []byte) *DefaultMessage {
 // RouteID 返回路由ID
 func (m *DefaultMessage) RouteID() uint32 {
 	return m.routeID
+}
+
+// Seq 返回序列号
+func (m *DefaultMessage) Seq() uint32 {
+	return m.seq
+}
+
+// SetSeq 设置序列号
+func (m *DefaultMessage) SetSeq(seq uint32) {
+	m.seq = seq
 }
 
 // Data 返回消息数据
@@ -50,6 +61,7 @@ func AcquireMessage() *DefaultMessage {
 // ReleaseMessage 将消息对象放回池中
 func ReleaseMessage(msg *DefaultMessage) {
 	msg.routeID = 0
+	msg.seq = 0
 	msg.data = msg.data[:0]
 	messagePool.Put(msg)
 }
@@ -57,8 +69,8 @@ func ReleaseMessage(msg *DefaultMessage) {
 // ========== SimpleCodec ==========
 
 // SimpleCodec 简单编解码器
-// 包格式: [4字节totalLen(大端)] + [4字节routeID(大端)] + [body]
-// header = 8字节，totalLen 包含自身
+// 包格式: [4字节totalLen(大端)] + [4字节routeID(大端)] + [4字节seq(大端)] + [body]
+// header = 12字节，totalLen 包含自身
 type SimpleCodec struct {
 	maxPacketSize int
 }
@@ -75,7 +87,7 @@ func NewSimpleCodec(maxPacketSize ...int) *SimpleCodec {
 // Encode 编码消息
 func (c *SimpleCodec) Encode(msg Message) ([]byte, error) {
 	body := msg.Data()
-	totalLen := 8 + len(body)
+	totalLen := 12 + len(body)
 	if totalLen > c.maxPacketSize {
 		return nil, fmt.Errorf("packet too large: %d > %d", totalLen, c.maxPacketSize)
 	}
@@ -83,32 +95,36 @@ func (c *SimpleCodec) Encode(msg Message) ([]byte, error) {
 	buf := make([]byte, totalLen)
 	binary.BigEndian.PutUint32(buf[0:4], uint32(totalLen))
 	binary.BigEndian.PutUint32(buf[4:8], msg.RouteID())
-	copy(buf[8:], body)
+	binary.BigEndian.PutUint32(buf[8:12], msg.Seq())
+	copy(buf[12:], body)
 	return buf, nil
 }
 
 // HeaderSize 返回固定 header 大小
-func (c *SimpleCodec) HeaderSize() int { return 8 }
+func (c *SimpleCodec) HeaderSize() int { return 12 }
 
-// DecodeHeader 解析 header，返回 routeID 和 body 长度
-func (c *SimpleCodec) DecodeHeader(header []byte) (routeID uint32, bodyLen int, err error) {
+// DecodeHeader 解析 header，返回 routeID、seq 和 body 长度
+func (c *SimpleCodec) DecodeHeader(header []byte) (routeID uint32, seq uint32, bodyLen int, err error) {
 	totalLen := int(binary.BigEndian.Uint32(header[0:4]))
-	if totalLen < 8 {
-		return 0, 0, fmt.Errorf("invalid packet length: %d", totalLen)
+	if totalLen < 12 {
+		return 0, 0, 0, fmt.Errorf("invalid packet length: %d", totalLen)
 	}
 	if totalLen > c.maxPacketSize {
-		return 0, 0, fmt.Errorf("packet too large: %d > %d", totalLen, c.maxPacketSize)
+		return 0, 0, 0, fmt.Errorf("packet too large: %d > %d", totalLen, c.maxPacketSize)
 	}
 	routeID = binary.BigEndian.Uint32(header[4:8])
-	bodyLen = totalLen - 8
-	return routeID, bodyLen, nil
+	seq = binary.BigEndian.Uint32(header[8:12])
+	bodyLen = totalLen - 12
+	return routeID, seq, bodyLen, nil
 }
 
 // DecodeBody 将 body 解析为消息
-func (c *SimpleCodec) DecodeBody(routeID uint32, body []byte) (Message, error) {
+func (c *SimpleCodec) DecodeBody(routeID uint32, seq uint32, body []byte) (Message, error) {
 	data := make([]byte, len(body))
 	copy(data, body)
-	return NewMessage(routeID, data), nil
+	msg := NewMessage(routeID, data)
+	msg.SetSeq(seq)
+	return msg, nil
 }
 
 // MaxPacketSize 返回最大包大小
@@ -124,8 +140,10 @@ type TLVCodec struct {
 }
 
 // TLVMessage TLV消息
+// seq 仅作本地字段使用，TLVCodec 追求最小 header 开销，不会将 seq 写入 wire 字节。
 type TLVMessage struct {
 	msgType byte
+	seq     uint32
 	data    []byte
 }
 
@@ -160,20 +178,21 @@ func (c *TLVCodec) Encode(msg Message) ([]byte, error) {
 // HeaderSize 返回固定 header 大小
 func (c *TLVCodec) HeaderSize() int { return 3 }
 
-// DecodeHeader 解析 header，返回 routeID 和 body 长度
-func (c *TLVCodec) DecodeHeader(header []byte) (routeID uint32, bodyLen int, err error) {
+// DecodeHeader 解析 header，返回 routeID、seq 和 body 长度。
+// TLV 格式不携带 seq，返回值恒为 0。
+func (c *TLVCodec) DecodeHeader(header []byte) (routeID uint32, seq uint32, bodyLen int, err error) {
 	length := int(binary.BigEndian.Uint16(header[1:3]))
 	if length > c.maxPacketSize {
-		return 0, 0, fmt.Errorf("TLV packet too large: %d", length)
+		return 0, 0, 0, fmt.Errorf("TLV packet too large: %d", length)
 	}
-	return uint32(header[0]), length, nil
+	return uint32(header[0]), 0, length, nil
 }
 
-// DecodeBody 将 body 解析为消息
-func (c *TLVCodec) DecodeBody(routeID uint32, body []byte) (Message, error) {
+// DecodeBody 将 body 解析为消息。seq 不会被 TLV wire 格式携带，仅原样存到本地字段。
+func (c *TLVCodec) DecodeBody(routeID uint32, seq uint32, body []byte) (Message, error) {
 	data := make([]byte, len(body))
 	copy(data, body)
-	return &TLVMessage{msgType: byte(routeID), data: data}, nil
+	return &TLVMessage{msgType: byte(routeID), seq: seq, data: data}, nil
 }
 
 // MaxPacketSize 返回最大包大小
@@ -181,6 +200,12 @@ func (c *TLVCodec) MaxPacketSize() int { return c.maxPacketSize }
 
 // RouteID TLVMessage 的路由ID就是 msgType
 func (m *TLVMessage) RouteID() uint32 { return uint32(m.msgType) }
+
+// Seq 返回序列号（仅本地字段，TLV wire 格式不传输）
+func (m *TLVMessage) Seq() uint32 { return m.seq }
+
+// SetSeq 设置序列号（仅本地字段，TLV wire 格式不传输）
+func (m *TLVMessage) SetSeq(seq uint32) { m.seq = seq }
 
 // Data 返回数据
 func (m *TLVMessage) Data() []byte { return m.data }
@@ -227,12 +252,12 @@ func (c *LineCodec) Encode(msg Message) ([]byte, error) {
 func (c *LineCodec) HeaderSize() int { return 0 }
 
 // DecodeHeader 不适用于 LineCodec，始终返回错误
-func (c *LineCodec) DecodeHeader(header []byte) (uint32, int, error) {
-	return 0, 0, fmt.Errorf("LineCodec does not support two-phase decoding")
+func (c *LineCodec) DecodeHeader(header []byte) (routeID uint32, seq uint32, bodyLen int, err error) {
+	return 0, 0, 0, fmt.Errorf("LineCodec does not support two-phase decoding")
 }
 
 // DecodeBody 不适用于 LineCodec
-func (c *LineCodec) DecodeBody(routeID uint32, body []byte) (Message, error) {
+func (c *LineCodec) DecodeBody(routeID uint32, seq uint32, body []byte) (Message, error) {
 	return nil, fmt.Errorf("LineCodec does not support two-phase decoding")
 }
 

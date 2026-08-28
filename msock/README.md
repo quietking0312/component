@@ -63,13 +63,17 @@ client.Send(msock.NewMessage(1, []byte("ping")))
 
 ## 消息
 
-`Message` 接口包含两个字段：`RouteID() uint32` 用于路由，`Data() []byte` 为消息体。
+`Message` 接口包含：`RouteID() uint32` 用于路由，`Seq() uint32`/`SetSeq()` 为序列号（可用于请求/响应关联、链路追踪等场景），`Data() []byte` 为消息体。
 
 ```go
 msg := msock.NewMessage(1, []byte("hello"))
 msg.RouteID() // 1
 msg.Data()    // []byte("hello")
+msg.SetSeq(42)
+msg.Seq()     // 42
 ```
+
+Seq 是否在网络字节中传输由具体 Codec 决定：目前只有默认的 `SimpleCodec` 会把 Seq 写入 wire；`TLVCodec`/`LineCodec` 为了保持包体积/协议简单，不在 wire 上传输 Seq，解码后 `Seq()` 恒为 0。
 
 高并发场景可使用对象池减少 GC 压力：
 
@@ -84,10 +88,10 @@ msock.ReleaseMessage(msg)
 
 ### 内置编解码器
 
-**SimpleCodec**（默认）— 二进制协议
+**SimpleCodec**（默认）— 二进制协议，唯一在 wire 上携带 Seq 的内置编解码器
 
 ```
-[4字节总长度 BE] [4字节RouteID BE] [Data]
+[4字节总长度 BE] [4字节RouteID BE] [4字节Seq BE] [Data]
 ```
 
 ```go
@@ -117,15 +121,19 @@ msock.NewLineCodec()
 
 ### 自定义编解码器
 
-实现 `Codec` 接口即可：
+实现 `Codec` 接口即可，采用两阶段解码：先解 header 得到 body 长度，再读 body：
 
 ```go
 type Codec interface {
     Encode(msg Message) ([]byte, error)
-    Decode(data []byte) (Message, int, error) // 返回消息和已消费字节数
+    HeaderSize() int
+    DecodeHeader(header []byte) (routeID uint32, seq uint32, bodyLen int, err error)
+    DecodeBody(routeID uint32, seq uint32, body []byte) (Message, error)
     MaxPacketSize() int
 }
 ```
+
+不需要 Seq 的业务可以在自定义 Codec 里直接忽略该参数（`DecodeHeader` 返回 `seq=0` 即可），无需为了省 4 字节而依赖内置类型。
 
 ## 路由
 
@@ -224,6 +232,58 @@ client.OnError(func(err error) { ... })
 ```
 
 无论是对端主动断开、网络超时还是服务端调用 `conn.Close()`，`OnDisconnect` 都会触发。
+
+## RPC
+
+在推送式的 `Send`/`Router` 之上，Client 提供了同步 RPC 调用：发出请求后阻塞等待匹配的响应，支持超时/取消。
+
+协议约定：
+
+- 请求/响应的序列号都通过 `Message.Seq()` 协议原生字段传递（默认 `SimpleCodec` 会在 wire 上携带，因此要求 RPC 场景使用 `SimpleCodec`）
+- 请求 `Data()` 即为原始 payload，RouteID 使用业务自定义的请求路由
+- 响应 `Data()` 为 `[1字节 status][payload]`，status=0 成功、status=1 失败（payload 为错误信息），RouteID 固定使用一个专用的 `replyRouteID`（类似心跳 Ping/Pong 各占一个专用 RouteID）
+
+### 客户端
+
+```go
+client := msock.NewClient(msock.WithConnType(msock.ConnTypeTCP))
+client.SetRouter(msock.NewRouter()) // EnableRPC 依赖 router 注册响应处理器
+
+// replyRouteID 需与业务路由、心跳路由不冲突；defaultTimeout 为 Call 未设置 deadline 时的默认超时
+if err := client.EnableRPC(0xFFFFFFFD, 5*time.Second); err != nil {
+    log.Fatal(err)
+}
+client.Connect(":8080")
+defer client.Close()
+
+ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+defer cancel()
+resp, err := client.Call(ctx, 1, []byte("ping"))
+
+// 或直接指定超时，无需自己管理 context
+resp, err = client.CallTimeout(1, []byte("ping"), 3*time.Second)
+```
+
+若发起调用所用的连接在等待响应期间断开（服务端重启、网络掉线等），`Call`/`CallTimeout` 会立即返回 `ErrConnClosed`，不会一直阻塞到超时才发现问题。
+
+### 服务端
+
+服务端 handler 用 `ParseRPCRequest` 解包请求、用 `ReplyRPC` / `ReplyRPCError` 按约定格式回包：
+
+```go
+router.Register(1, func(conn msock.Conn, msg msock.Message) {
+    seq, payload, err := msock.ParseRPCRequest(msg)
+    if err != nil {
+        return
+    }
+    result, err := doWork(payload)
+    if err != nil {
+        msock.ReplyRPCError(conn, 0xFFFFFFFD, seq, err)
+        return
+    }
+    msock.ReplyRPC(conn, 0xFFFFFFFD, seq, result)
+})
+```
 
 ## 连接对象
 

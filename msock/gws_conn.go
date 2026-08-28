@@ -117,7 +117,7 @@ func (c *gwsConn) handleBinaryMessage(data []byte) {
 			}
 			return
 		}
-		routeID, bodyLen, err := codec.DecodeHeader(data[:headerSize])
+		routeID, seq, bodyLen, err := codec.DecodeHeader(data[:headerSize])
 		if err != nil {
 			if c.server != nil {
 				c.server.logger.Error(fmt.Sprintf("gws decode header error: %v", err))
@@ -131,7 +131,7 @@ func (c *gwsConn) handleBinaryMessage(data []byte) {
 			}
 			return
 		}
-		msg, err := codec.DecodeBody(routeID, data[headerSize:end])
+		msg, err := codec.DecodeBody(routeID, seq, data[headerSize:end])
 		if err != nil {
 			if c.server != nil {
 				c.server.logger.Error(fmt.Sprintf("gws decode body error: %v", err))

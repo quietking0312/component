@@ -23,7 +23,7 @@ func (c *gwsClientConn) handleBinaryMessage(data []byte) {
 			}
 			return
 		}
-		routeID, bodyLen, err := codec.DecodeHeader(data[:headerSize])
+		routeID, seq, bodyLen, err := codec.DecodeHeader(data[:headerSize])
 		if err != nil {
 			if c.client.handlers.onError != nil {
 				c.client.handlers.onError(err)
@@ -37,7 +37,7 @@ func (c *gwsClientConn) handleBinaryMessage(data []byte) {
 			}
 			return
 		}
-		msg, err := codec.DecodeBody(routeID, data[headerSize:end])
+		msg, err := codec.DecodeBody(routeID, seq, data[headerSize:end])
 		if err != nil {
 			if c.client.handlers.onError != nil {
 				c.client.handlers.onError(err)
@@ -69,9 +69,7 @@ func (h *gwsClientEventHandler) OnClose(socket *gws.Conn, err error) {
 	}
 	conn := v.(*gwsClientConn)
 	_ = conn.Close()
-	if h.client.handlers.onDisconnect != nil {
-		h.client.handlers.onDisconnect(conn)
-	}
+	h.client.notifyDisconnect(conn)
 }
 
 func (h *gwsClientEventHandler) OnPing(socket *gws.Conn, payload []byte) {
