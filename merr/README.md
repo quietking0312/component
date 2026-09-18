@@ -7,6 +7,7 @@
 - 🏷️ **错误码体系**：每个错误附带可读的错误码（如 `ERR_NOT_FOUND`）
 - 🔗 **链式 Unwrap**：支持错误链追踪，兼容 `errors.Is/As`
 - 🎯 **预定义错误**：提供常见的预定义错误（参数错误、禁止访问、超时等）
+- 📋 **预设错误码消息**：可注册错误码对应的消息，兼容 proto 生成的数字枚举错误码
 - 🛡️ **类型安全**：通过接口确保错误类型一致性
 
 ## 快速开始
@@ -61,15 +62,57 @@ if merr.IsCode(err, "ERR_USER_NOT_FOUND") {
 }
 ```
 
+### 注册预设错误码消息（兼容 proto 生成的数字枚举错误码）
+
+`code` 参数通过泛型约束为 `string` 或 `int32`（含具名类型，如 proto 生成的枚举），传其他类型会在**编译期**报错；
+数字枚举错误码会自动取其数值作为错误码：
+
+```go
+// 一般在 init 中注册一次
+merr.RegisterCode(pb.ErrCode_USER_NOT_FOUND, "用户不存在")
+merr.RegisterCode(pb.ErrCode_ORDER_EXPIRED, "订单已过期")
+// 或批量注册
+merr.RegisterCodes(map[string]string{
+    "1001": "用户不存在",
+    "1002": "订单已过期",
+})
+
+// 直接按码构造错误，消息取自预设
+err := merr.Preset(pb.ErrCode_USER_NOT_FOUND)
+fmt.Println(err.Error()) // [1001] 用户不存在
+
+// New/Wrap/Wrapf 附加的信息会自动与预设消息拼接
+err = merr.New(pb.ErrCode_USER_NOT_FOUND, "id=%d", 42)
+fmt.Println(err.Error()) // [1001] 用户不存在: id=42
+
+merr.IsCode(err, pb.ErrCode_USER_NOT_FOUND) // true
+```
+
 ## API 文档
 
 ### 创建错误
 
 | 函数 | 说明 |
 |------|------|
-| `New(code string, format string, a ...any) *MErr` | 创建新错误 |
-| `Wrap(code string, err error) *MErr` | 包装已有错误 |
-| `Wrapf(code string, err error, format string, a ...any) *MErr` | 包装错误并附加消息 |
+| `New[T Code](code T, format string, a ...any) *MErr` | 创建新错误 |
+| `Wrap[T Code](code T, err error) *MErr` | 包装已有错误 |
+| `Wrapf[T Code](code T, err error, format string, a ...any) *MErr` | 包装错误并附加消息 |
+| `Preset[T Code](code T) *MErr` | 使用预设消息按码创建错误，无需再传消息 |
+
+其中 `Code` 约束为 `~string \| ~int32`：
+
+```go
+type Code interface {
+    ~string | ~int32
+}
+```
+
+### 预设错误码消息
+
+| 函数 | 说明 |
+|------|------|
+| `RegisterCode[T Code](code T, message string)` | 注册单个错误码的预设消息 |
+| `RegisterCodes[T Code](codeMessages map[T]string)` | 批量注册错误码的预设消息 |
 
 ### 预定义错误
 
@@ -86,7 +129,7 @@ if merr.IsCode(err, "ERR_USER_NOT_FOUND") {
 
 | 函数 | 说明 |
 |------|------|
-| `IsCode(err error, code string) bool` | 判断错误是否匹配指定错误码 |
+| `IsCode[T Code](err error, code T) bool` | 判断错误是否匹配指定错误码 |
 
 ### 接口
 
