@@ -98,12 +98,14 @@ func TestBalancer_NodeOffline_MinReassign(t *testing.T) {
 
 	// 统计需要重新分配的用户数
 	reassigned := 0
+	x := 0
 	for i := 0; i < 3000; i++ {
 		userID := fmt.Sprintf("user-%d", i)
 		node, _ := b.Pick(userID)
 		if assignments[userID] == "node-2" {
 			// 原来在 node-2 的用户必须迁移
 			assert.NotEqual(t, "node-2", node.ID)
+			x++
 		} else {
 			// 不在 node-2 的用户应该尽量保持不动
 			if assignments[userID] != node.ID {
@@ -114,6 +116,7 @@ func TestBalancer_NodeOffline_MinReassign(t *testing.T) {
 
 	// 重新分配的用户比例应该很低（< 10%）
 	reassignRate := float64(reassigned) / 3000.0
+	t.Logf("下线 node-2 后, 进行迁移的节点用户: %d", x)
 	t.Logf("下线 node-2 后，非必要重新分配用户: %d (%.2f%%)", reassigned, reassignRate*100)
 	assert.Less(t, reassignRate, 0.10, "重新分配比例应低于 10%%")
 }

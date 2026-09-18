@@ -27,6 +27,7 @@ use (
 	./mpubsub
 	./mrand
 	./mredis
+	./mreqsign
 	./mrpc
 	./msnowflake
 	./msock
